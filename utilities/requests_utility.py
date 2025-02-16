@@ -1,12 +1,13 @@
 import json
 import requests
 import logging as logger
+from pprint import pprint
 
 
 class RequestsUtility:
 
-    def __init__(self):
-        self.base_url = "https://api.dexscreener.com/"
+    def __init__(self, base_url):
+        self.base_url = base_url
 
     def assert_status_code(self):
         assert self.rs_status_code == self.expected_status_code, (
@@ -24,6 +25,6 @@ class RequestsUtility:
         self.rs_json = rs_api.json()
         self.assert_status_code()
 
-        logger.debug(f"Api GET Response is:{rs_api.json()}")
+        logger.debug(f"Api GET Response is:{pprint(rs_api.json())}")
 
         return rs_api.json()

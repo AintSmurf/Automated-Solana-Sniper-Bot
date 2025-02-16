@@ -1,3 +1,5 @@
 venv
 scrapper
 plan.txt
+__pycache__/
+*.py[cod]
