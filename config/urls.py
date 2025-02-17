@@ -7,5 +7,5 @@ DEXSCANNER = {
 
 RUGCHECK = {
     "BASE_URL": "https://api.rugcheck.xyz/v1",
-    "TOKEN_RISK": "/tokens/{mint}/report/summary",
+    "TOKEN_RISK": "/tokens",
 }
