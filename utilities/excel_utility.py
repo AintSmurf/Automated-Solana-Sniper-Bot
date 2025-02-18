@@ -1,7 +1,7 @@
 import logging as logger
 
 
-class Excel_Utility:
+class ExcelUtility:
 
     def __init__(self):
         pass

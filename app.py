@@ -1,15 +1,21 @@
 from pprint import pprint
-from utilities.dexscanner_utility import Dexscanner_utility
-from utilities.rug_check_utility import Rug_Check_Utility
+from utilities.dexscanner_utility import DexscannerUtility
+from utilities.rug_check_utility import RequestsUtility
+from connectors.helius_connector import HeliusConnector
+import time
 import logging as logger
 
 logger.basicConfig(level=logger.INFO)
 
 
 def main():
-    dexscanner_utility = Dexscanner_utility()
-    rug_Check_Utility = Rug_Check_Utility()
-    dexscanner_utility.print_solana_tokens()
+    helius_connector = HeliusConnector(devnet=False)
+    while True:
+        time.sleep(1)
+
+    # dexscanner_utility = DexscannerUtility()
+    # rug_Check_Utility = RequestsUtility()
+    # dexscanner_utility.print_solana_tokens()
     # rug_Check_Utility.check_token_security(
     #     "CUDQ4vyucEyY3TpP3Mm2wDJ4BnGUGBNQtKMU1Smvpump"
     # )

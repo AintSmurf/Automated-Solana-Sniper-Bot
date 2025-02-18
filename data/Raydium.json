@@ -1,0 +1,15 @@
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "logsSubscribe",
+    "params": [
+        {
+            "mentions": [
+                "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
+            ]
+        },
+        {
+            "commitment": "finalized"
+        }
+    ]
+}

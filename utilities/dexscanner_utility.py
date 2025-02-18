@@ -4,7 +4,7 @@ from utilities.requests_utility import RequestsUtility
 import logging as logger
 
 
-class Dexscanner_utility:
+class DexscannerUtility:
     def __init__(self):
         base_url = DEXSCANNER["BASE_URL"]
         self.data = DEXSCANNER["TOKEN_DATA"]

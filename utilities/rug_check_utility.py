@@ -3,7 +3,7 @@ from utilities.requests_utility import RequestsUtility
 import logging as logger
 
 
-class Rug_Check_Utility:
+class RugCheckUtility:
     def __init__(self):
         base_url = RUGCHECK["BASE_URL"]
         self.token_risk = RUGCHECK["TOKEN_RISK"]
