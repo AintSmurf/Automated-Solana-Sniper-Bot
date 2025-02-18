@@ -5,3 +5,4 @@ __pycache__/
 *.py[cod]
 local_credentials.ps1
 helius_sniper.log
+__pycache__
