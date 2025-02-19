@@ -9,3 +9,4 @@ RUGCHECK = {
     "BASE_URL": "https://api.rugcheck.xyz/v1",
     "TOKEN_RISK": "/tokens",
 }
+HELIUS_URL = {"BASE_URL": "https://mainnet.helius-rpc.com/?api-key="}

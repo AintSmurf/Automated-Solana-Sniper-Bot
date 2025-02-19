@@ -28,3 +28,19 @@ class RequestsUtility:
         logger.debug(f"Api GET Response is:{pprint(rs_api.json())}")
 
         return rs_api.json()
+
+    def post(
+        self, endpoint=None, payload=None, headers=None, expected_status_code=200
+    ) -> json:
+        if not headers:
+            headers = {"Content-Type": "application/json"}
+        self.url = self.base_url + endpoint
+        rs_api = requests.post(url=self.url, data=json.dumps(payload), headers=headers)
+        self.rs_status_code = rs_api.status_code
+        self.expected_status_code = expected_status_code
+        self.rs_json = rs_api.json()
+        self.assert_status_code()
+
+        logger.debug(f"Api POST Response is:{rs_api.json()}")
+
+        return rs_api.json()

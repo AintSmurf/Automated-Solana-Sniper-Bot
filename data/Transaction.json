@@ -1,0 +1,11 @@
+{
+    "jsonrpc": "2.0",
+    "id": "ID_PLACE_HOLDER",
+    "method": "getTransaction",
+    "params": [
+        "SIGNATURE_PLACEHOLDER",
+        {
+            "maxSupportedTransactionVersion": 0
+        }
+    ]
+}
