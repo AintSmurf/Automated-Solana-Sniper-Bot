@@ -17,6 +17,7 @@ class ExcelUtility:
         os.makedirs(self.SIGNATURES_DIR, exist_ok=True)
         os.makedirs(self.TRANSACTIONS_DIR, exist_ok=True)
         os.makedirs(self.TOKENS_DIR, exist_ok=True)
+        logger.info("succefully created folders ..")
 
     def save_to_csv(self, directory, filename, data):
         filepath = os.path.join(directory, filename)
@@ -29,4 +30,4 @@ class ExcelUtility:
             updated_df = df
 
         updated_df.to_csv(filepath, index=False)
-        logger.info(f"✅ Data saved to {filepath}")
+        logger.debug(f"✅ Data saved to {filepath}")
