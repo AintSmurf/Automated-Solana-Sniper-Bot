@@ -3,27 +3,47 @@ import json
 import os
 import logging
 import websocket
+import sys
 from utilities.credentials_utility import CredentialsUtility
 from utilities.excel_utility import ExcelUtility
 from utilities.requests_utility import RequestsUtility
 from config.urls import HELIUS_URL
 from config.web_socket import HELIUS
 
+
 # Setup logging
 LOG_FILE = "helius_sniper.log"
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
-logging.basicConfig(
-    filename=LOG_FILE, filemode="a", format=LOG_FORMAT, level=logging.INFO
-)
-logger = logging.getLogger()
 
-# Also log to console
-console_handler = logging.StreamHandler()
+# ✅ File handler (Logs everything)
+file_handler = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")  # Use UTF-8
+file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+file_handler.setLevel(logging.DEBUG)  # Save all logs
+
+# ✅ Console handler (Only logs INFO and above)
+console_handler = logging.StreamHandler(sys.stdout)  # Force standard output
 console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+console_handler.setLevel(logging.INFO)  # Only display INFO and above in console
+
+# ✅ Create logger
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)  # Capture all logs
+
+# ✅ Add handlers
+logger.addHandler(file_handler)
 logger.addHandler(console_handler)
+
 
 # Global storage for new signatures
 signature_queue = []
+
+
+# Global storage for new signatures
+signature_queue = []
+
+latest_block_time = int(time.time())  # Approximate current Unix timestamp
+known_tokens = set()
+seen_tokens = set()
 
 
 class HeliusConnector:
@@ -52,61 +72,83 @@ class HeliusConnector:
         self.raydium_payload = self.get_payload("Raydium")
         self.transaction_payload = self.get_payload("Transaction")
 
-    def fetch_and_save_transaction(self, signature):
-        """Fetch transaction details and save to CSV."""
+    def fetch_transaction(self, signature):
+        """Fetch transaction details from Helius API."""
         logger.info(f"Fetching transaction details for: {signature}")
-        self.transaction_payload["params"][0] = signature
+
+        # Replace placeholders in transaction payload
         self.transaction_payload["id"] = self.id
+        self.transaction_payload["params"][0] = signature
         self.id += 1
 
         try:
-            tx_data = self.requests_utility.post(payload=self.transaction_payload)
+            tx_data = self.requests_utility.post(
+                endpoint=self.api_key["API_KEY"], payload=self.transaction_payload
+            )
 
-            # Log raw response for debugging
-            logger.info(f"🔍 Raw transaction data: {json.dumps(tx_data, indent=4)}")
+            # ✅ Extract Token Mint & Owner (PostTokenBalances)
+            post_token_balances = (
+                tx_data.get("result", {}).get("meta", {}).get("postTokenBalances", [])
+            )
 
-            # Extract relevant data safely
-            result = tx_data.get("result", {})
-            meta = result.get("meta", {})
-            transaction = result.get("transaction", {})
+            token_mint = (
+                post_token_balances[0]["mint"] if post_token_balances else "N/A"
+            )
+            token_owner = (
+                post_token_balances[0]["owner"] if post_token_balances else "N/A"
+            )
 
-            # Signature
-            extracted_signature = transaction.get("signatures", ["N/A"])[0]
+            # ✅ Check if token is already known
+            if token_mint in known_tokens:
+                logger.debug(f"⏩ Ignoring known token: {token_mint}")
+                return
 
-            # Balances
-            pre_balance = meta.get("preBalances", [0])[0]
-            post_balance = meta.get("postBalances", [0])[0]
+            # ✅ Extract Liquidity (Estimated)
+            pre_balances = (
+                tx_data.get("result", {}).get("meta", {}).get("preBalances", [])
+            )
+            post_balances = (
+                tx_data.get("result", {}).get("meta", {}).get("postBalances", [])
+            )
 
-            # Instructions (if needed)
-            instructions = transaction.get("message", {}).get("instructions", [])
-            first_instruction = instructions[0] if instructions else {}
+            liquidity = (
+                pre_balances[0] - post_balances[0]
+                if len(pre_balances) > 0 and len(post_balances) > 0
+                else 0
+            )
 
-            # Save to Excel
+            # ✅ Market Cap Placeholder (Needs external API)
+            market_cap = "N/A"
+
+            # ✅ Save to CSV
             self.excel_utility.save_to_csv(
-                "TRANSACTIONS_DIR",
+                self.excel_utility.TRANSACTIONS_DIR,
                 "transactions.csv",
                 {
-                    "Signature": [extracted_signature],
-                    "Pre-Balance": [pre_balance],
-                    "Post-Balance": [post_balance],
-                    "Instruction Data": [first_instruction.get("data", "N/A")],
+                    "Signature": [signature],
+                    "Token Mint": [token_mint],
+                    "Token Owner": [token_owner],
+                    "Liquidity (Estimated)": [liquidity],
+                    "Market Cap": [market_cap],
                 },
             )
 
+            logger.info(
+                f"✅ New Token Data Saved: {token_mint} (Signature: {signature})"
+            )
+
         except Exception as e:
-            logger.error(f"❌ Error fetching/saving transaction details: {e}")
+            logger.error(f"❌ Error fetching transaction data: {e}")
 
     def run_transaction_fetcher(self):
-        """Runs transaction fetcher every 30 seconds in a loop."""
         while True:
-            time.sleep(30)
             if signature_queue:
                 logger.info(
                     f"🔄 Fetching transactions for {len(signature_queue)} new signatures..."
                 )
                 while signature_queue:
                     signature = signature_queue.pop(0)
-                    self.fetch_and_save_transaction(signature)
+                    self.fetch_transaction(signature)
 
     def start_ws(self):
         """Starts the WebSocket connection to Helius RPC."""
@@ -129,9 +171,17 @@ class HeliusConnector:
         logger.info("✅ Successfully subscribed to AMM liquidity logs.")
 
     def on_message(self, ws, message):
-        """Handles incoming WebSocket messages."""
+        """Handles incoming WebSocket messages for detecting new tokens ONLY."""
         try:
             data = json.loads(message)
+
+            # ✅ Extract Slot and Signature
+            slot = (
+                data.get("params", {})
+                .get("result", {})
+                .get("context", {})
+                .get("slot", None)
+            )
             signature = (
                 data.get("params", {})
                 .get("result", {})
@@ -144,18 +194,59 @@ class HeliusConnector:
                 .get("value", {})
                 .get("logs", [])
             )
+            error = (
+                data.get("params", {})
+                .get("result", {})
+                .get("value", {})
+                .get("err", None)
+            )
+            pre_token_balances = (
+                data.get("params", {})
+                .get("result", {})
+                .get("value", {})
+                .get("preTokenBalances", [])
+            )
+            if error is not None:
+                logger.debug(
+                    f"⚠️ Ignoring failed transaction: {signature} (Error: {error})"
+                )
+                return
 
-            for log in logs:
-                if "Instruction: Initialize" in log:
-                    logger.info(f"🔵 New Pool Detected: {signature}")
-                    signature_queue.append(signature)
+            if not any("Instruction: InitializeMint" in log for log in logs):
+                logger.debug(f"⏩ Ignoring non-token mint transaction: {signature}")
+                return
+            logger.info("✅ Passed Step 1: Detected 'InitializeMint' instruction.")
+            # step2
+            if pre_token_balances:
+                logger.debug(
+                    f"⏩ Ignoring transaction (Token existed before): {signature}"
+                )
+                return
 
-                    # Save to CSV
-                    self.excel_utility.save_to_csv(
-                        self.excel_utility.SIGNATURES_DIR,
-                        "pools.csv",
-                        {"Signature": [signature]},
-                    )
+            logger.info(
+                "✅ Passed Step 2: Token was NOT in `preTokenBalances`, likely new."
+            )
+            # step3
+
+            # step4
+            current_time = int(time.time())
+            token_old = 30
+            block_time = latest_block_time - (321794320 - slot) * 0.4
+
+            if current_time - block_time > token_old:
+                logger.warning(
+                    f"⚠️ Ignoring old transaction: {signature} (Slot: {slot})"
+                )
+                return
+
+            logger.info(f"✅ Passed Step 4: Transaction is within {token_old} seconds.")
+
+            if signature in signature_queue:
+                logger.debug(f"⏩ Ignoring duplicate signature: {signature}")
+                return
+
+            signature_queue.append(signature)
+            logger.info(f"🎯 New Token Detected: {signature} (Slot: {slot})")
 
         except Exception as e:
             logger.error(f"❌ Error processing WebSocket message: {e}")

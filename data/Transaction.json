@@ -1,6 +1,6 @@
 {
     "jsonrpc": "2.0",
-    "id": "ID_PLACE_HOLDER",
+    "id": "ID_PLACEHOLDER",
     "method": "getTransaction",
     "params": [
         "SIGNATURE_PLACEHOLDER",
