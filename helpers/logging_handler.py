@@ -21,12 +21,12 @@ class LoggingHandler:
         os.makedirs(DEBUG_DIR, exist_ok=True)
         os.makedirs(ERROR_DIR, exist_ok=True)
 
-        # ✅ Define log file paths
+        # Define log file paths
         log_file = os.path.join(LOG_DIR, "log.log")
         debug_file = os.path.join(DEBUG_DIR, "debug.log")
         error_file = os.path.join(ERROR_DIR, "errors.log")
 
-        # ✅ Rotating handlers (Max size: 10MB, 5 backups)
+        # Rotating handlers (Max size: 10MB, 5 backups)
         log_handler = RotatingFileHandler(
             log_file, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
         )
@@ -35,7 +35,7 @@ class LoggingHandler:
         )
         error_handler = logging.FileHandler(error_file, mode="a", encoding="utf-8")
 
-        # ✅ Set log formats
+        # Set log formats
         log_format = "%(asctime)s - %(levelname)s - %(message)s"
         formatter = logging.Formatter(log_format)
 
@@ -48,16 +48,16 @@ class LoggingHandler:
         error_handler.setFormatter(formatter)
         error_handler.setLevel(logging.WARNING)
 
-        # ✅ Console handler (Only logs INFO and above)
+        # Console handler (Only logs INFO and above)
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(formatter)
         console_handler.setLevel(logging.INFO)
 
-        # ✅ Create logger
+        # Create logger
         logger = logging.getLogger()
         logger.setLevel(logging.DEBUG)
 
-        # ✅ Add handlers
+        # Add handlers
         logger.addHandler(log_handler)
         logger.addHandler(debug_handler)
         logger.addHandler(error_handler)

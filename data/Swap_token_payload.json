@@ -1,0 +1,12 @@
+{
+    "quoteResponse": {},
+    "userPublicKey": "PRIVATE_KEY_WALLET",
+    "wrapAndUnwrapSol": true,
+    "dynamicSlippage": true,
+    "prioritizationFeeLamports": {
+        "priorityLevelWithMaxLamports": {
+            "maxLamports": 1000000,
+            "priorityLevel": "veryHigh"
+        }
+    }
+}
