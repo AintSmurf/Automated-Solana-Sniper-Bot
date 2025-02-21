@@ -1,5 +1,9 @@
 import os
-import logging as logger
+from helpers.logging_handler import LoggingHandler
+
+
+# set up logger
+logger = LoggingHandler.get_logger()
 
 
 class CredentialsUtility:

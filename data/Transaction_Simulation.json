@@ -1,0 +1,11 @@
+{
+    "jsonrpc": "2.0",
+    "id": "ID_PLACE_HOLDER",
+    "method": "simulateTransaction",
+    "params": [
+        "TOKEN_MINT_PLACE_HOLDER",
+        {
+            "encoding": "base64"
+        }
+    ]
+}

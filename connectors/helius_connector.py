@@ -1,42 +1,17 @@
 import time
 import json
 import os
-import logging
 import websocket
-import sys
+from datetime import datetime
 from utilities.credentials_utility import CredentialsUtility
 from utilities.excel_utility import ExcelUtility
 from utilities.requests_utility import RequestsUtility
+from helpers.logging_handler import LoggingHandler
 from config.urls import HELIUS_URL
 from config.web_socket import HELIUS
 
-
-# Setup logging
-LOG_FILE = "helius_sniper.log"
-LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
-
-# ✅ File handler (Logs everything)
-file_handler = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")  # Use UTF-8
-file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-file_handler.setLevel(logging.DEBUG)  # Save all logs
-
-# ✅ Console handler (Only logs INFO and above)
-console_handler = logging.StreamHandler(sys.stdout)  # Force standard output
-console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-console_handler.setLevel(logging.INFO)  # Only display INFO and above in console
-
-# ✅ Create logger
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)  # Capture all logs
-
-# ✅ Add handlers
-logger.addHandler(file_handler)
-logger.addHandler(console_handler)
-
-
-# Global storage for new signatures
-signature_queue = []
-
+# set up logger
+logger = LoggingHandler.get_logger()
 
 # Global storage for new signatures
 signature_queue = []
@@ -71,12 +46,39 @@ class HeliusConnector:
     def prepare_files(self):
         self.raydium_payload = self.get_payload("Raydium")
         self.transaction_payload = self.get_payload("Transaction")
+        self.transaction_simulation_payload = self.get_payload("Transaction_Simulation")
+
+    def is_honeypot(self, token_mint):
+        """Simulate a transaction to check if token is a honeypot"""
+        self.transaction_simulation_payload["id"] = self.id
+        self.id += 1
+        self.transaction_simulation_payload["params"] = [
+            token_mint,
+            {"encoding": "base64"},
+        ]
+        try:
+            response = self.requests_utility.post(
+                endpoint=self.api_key["API_KEY"],
+                payload=self.transaction_simulation_payload,
+            )
+            logger.debug(f"honeypot raw data:{response}")
+            if "error" in response:
+                logger.warning(
+                    f"⚠️ Token {token_mint} is likely a honeypot (Selling blocked)."
+                )
+                return True
+            else:
+                logger.info(f"✅ Token {token_mint} passed honeypot check.")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Error checking honeypot: {e}")
+            return True
 
     def fetch_transaction(self, signature):
         """Fetch transaction details from Helius API."""
         logger.info(f"Fetching transaction details for: {signature}")
 
-        # Replace placeholders in transaction payload
         self.transaction_payload["id"] = self.id
         self.transaction_payload["params"][0] = signature
         self.id += 1
@@ -86,7 +88,6 @@ class HeliusConnector:
                 endpoint=self.api_key["API_KEY"], payload=self.transaction_payload
             )
 
-            # ✅ Extract Token Mint & Owner (PostTokenBalances)
             post_token_balances = (
                 tx_data.get("result", {}).get("meta", {}).get("postTokenBalances", [])
             )
@@ -98,12 +99,10 @@ class HeliusConnector:
                 post_token_balances[0]["owner"] if post_token_balances else "N/A"
             )
 
-            # ✅ Check if token is already known
             if token_mint in known_tokens:
                 logger.debug(f"⏩ Ignoring known token: {token_mint}")
                 return
 
-            # ✅ Extract Liquidity (Estimated)
             pre_balances = (
                 tx_data.get("result", {}).get("meta", {}).get("preBalances", [])
             )
@@ -117,21 +116,26 @@ class HeliusConnector:
                 else 0
             )
 
-            # ✅ Market Cap Placeholder (Needs external API)
             market_cap = "N/A"
 
-            # ✅ Save to CSV
-            self.excel_utility.save_to_csv(
-                self.excel_utility.TRANSACTIONS_DIR,
-                "transactions.csv",
-                {
-                    "Signature": [signature],
-                    "Token Mint": [token_mint],
-                    "Token Owner": [token_owner],
-                    "Liquidity (Estimated)": [liquidity],
-                    "Market Cap": [market_cap],
-                },
-            )
+            now = datetime.now()
+            date_str = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M:%S")
+
+            filename = f"transactions_{date_str}.csv"
+            if not self.is_honeypot(token_mint):
+                self.excel_utility.save_to_csv(
+                    self.excel_utility.TRANSACTIONS_DIR,
+                    filename,
+                    {
+                        "Timestamp": [f"{date_str} {time_str}"],
+                        "Signature": [signature],
+                        "Token Mint": [token_mint],
+                        "Token Owner": [token_owner],
+                        "Liquidity (Estimated)": [liquidity],
+                        "Market Cap": [market_cap],
+                    },
+                )
 
             logger.info(
                 f"✅ New Token Data Saved: {token_mint} (Signature: {signature})"
@@ -173,9 +177,17 @@ class HeliusConnector:
     def on_message(self, ws, message):
         """Handles incoming WebSocket messages for detecting new tokens ONLY."""
         try:
-            data = json.loads(message)
+            if not message:
+                logger.error("❌ Received an empty WebSocket message.")
+                return
 
-            # ✅ Extract Slot and Signature
+            try:
+                data = json.loads(message)
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Error decoding WebSocket message: {e}")
+                return
+
+            #  Extract Slot and Signature
             slot = (
                 data.get("params", {})
                 .get("result", {})
@@ -206,17 +218,18 @@ class HeliusConnector:
                 .get("value", {})
                 .get("preTokenBalances", [])
             )
-            if error is not None:
-                logger.debug(
-                    f"⚠️ Ignoring failed transaction: {signature} (Error: {error})"
-                )
-                return
 
+            # if error is not None:
+            #     logger.debug(
+            #         f"⚠️ Ignoring failed transaction: {signature} (Error: {error})"
+            #     )
+            #     return
             if not any("Instruction: InitializeMint" in log for log in logs):
                 logger.debug(f"⏩ Ignoring non-token mint transaction: {signature}")
                 return
+
             logger.info("✅ Passed Step 1: Detected 'InitializeMint' instruction.")
-            # step2
+
             if pre_token_balances:
                 logger.debug(
                     f"⏩ Ignoring transaction (Token existed before): {signature}"
@@ -226,9 +239,7 @@ class HeliusConnector:
             logger.info(
                 "✅ Passed Step 2: Token was NOT in `preTokenBalances`, likely new."
             )
-            # step3
 
-            # step4
             current_time = int(time.time())
             token_old = 30
             block_time = latest_block_time - (321794320 - slot) * 0.4
@@ -239,17 +250,19 @@ class HeliusConnector:
                 )
                 return
 
-            logger.info(f"✅ Passed Step 4: Transaction is within {token_old} seconds.")
+            logger.info(f"✅ Passed Step 3: Transaction is within {token_old} seconds.")
 
             if signature in signature_queue:
                 logger.debug(f"⏩ Ignoring duplicate signature: {signature}")
                 return
 
+            logger.info(f"✅ Passed Step 4: None duplicate signature: {signature}")
+
             signature_queue.append(signature)
             logger.info(f"🎯 New Token Detected: {signature} (Slot: {slot})")
 
         except Exception as e:
-            logger.error(f"❌ Error processing WebSocket message: {e}")
+            logger.error(f"❌ Error processing WebSocket message: {e}", exc_info=True)
 
     def on_error(self, ws, error):
         """Handles WebSocket errors."""

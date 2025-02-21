@@ -1,7 +1,11 @@
 import json
 import requests
-import logging as logger
 from pprint import pprint
+
+from helpers.logging_handler import LoggingHandler
+
+# set up logger
+logger = LoggingHandler.get_logger()
 
 
 class RequestsUtility:

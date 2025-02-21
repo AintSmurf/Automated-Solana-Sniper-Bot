@@ -4,6 +4,6 @@ plan.txt
 __pycache__/
 *.py[cod]
 local_credentials.ps1
-helius_sniper.log
+logs
 __pycache__
 results
