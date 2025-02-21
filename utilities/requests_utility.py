@@ -1,7 +1,5 @@
 import json
 import requests
-from pprint import pprint
-
 from helpers.logging_handler import LoggingHandler
 
 # set up logger
@@ -15,7 +13,7 @@ class RequestsUtility:
 
     def assert_status_code(self):
         assert self.rs_status_code == self.expected_status_code, (
-            f"Expected status code{self.expected_status_code} but actual status code is{self.rs_status_code}"
+            f"Expected status code {self.expected_status_code} but actual status code is {self.rs_status_code}\n"
             f"URL:{self.url}, Response Json: {self.rs_json}"
         )
 
@@ -29,7 +27,7 @@ class RequestsUtility:
         self.rs_json = rs_api.json()
         self.assert_status_code()
 
-        logger.debug(f"Api GET Response is:{pprint(rs_api.json())}")
+        logger.debug(f"Api GET Response is:{rs_api.json()}")
 
         return rs_api.json()
 
