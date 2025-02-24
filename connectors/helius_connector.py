@@ -6,11 +6,12 @@ from utilities.credentials_utility import CredentialsUtility
 from utilities.excel_utility import ExcelUtility
 from utilities.requests_utility import RequestsUtility
 from helpers.logging_handler import LoggingHandler
-from helpers.token_handler import TokenHandler
+from helpers.solana_handler import SolanaHandler
 from helpers.framework_helper import get_payload
 from config.urls import HELIUS_URL
 from config.web_socket import HELIUS
 from collections import deque
+from utilities.rug_check_utility import RugCheckUtility
 
 
 # set up logger
@@ -29,11 +30,11 @@ class HeliusConnector:
         logger.info("Initializing Helius WebSocket connection...")
         credentials_utility = CredentialsUtility()
         self.excel_utility = ExcelUtility()
-        self.token_simulator = TokenHandler()
+        self.token_simulator = SolanaHandler()
         self.requests_utility = RequestsUtility(HELIUS_URL["BASE_URL"])
         self.api_key = credentials_utility.get_helius_api_key()
         self.latest_block_time = int(time.time())
-
+        self.rug_check_utility = RugCheckUtility()
         if devnet:
             self.wss_url = HELIUS["LOGS_SOCKET_DEVNET"] + self.api_key["API_KEY"]
         else:
@@ -47,6 +48,8 @@ class HeliusConnector:
         self.raydium_payload = get_payload("Raydium")
         self.transaction_payload = get_payload("Transaction")
         self.transaction_simulation_payload = get_payload("Transaction_Simulation")
+        self.token_address_payload = get_payload("Token_adress_payload")
+        self.lastest_slot_paylaod = get_payload("Slot_payload")
 
     def fetch_transaction(self, signature):
         """Fetch transaction details from Helius API."""
@@ -72,22 +75,40 @@ class HeliusConnector:
                 post_token_balances[0]["owner"] if post_token_balances else "N/A"
             )
 
-            if token_mint in known_tokens:
-                logger.debug(f"⏩ Ignoring known token: {token_mint}")
-                return
-
             pre_balances = (
                 tx_data.get("result", {}).get("meta", {}).get("preBalances", [])
             )
             post_balances = (
                 tx_data.get("result", {}).get("meta", {}).get("postBalances", [])
             )
-
             liquidity = (
                 pre_balances[0] - post_balances[0]
                 if len(pre_balances) > 0 and len(post_balances) > 0
                 else 0
             )
+            logger.debug(f"transaction response:{tx_data}")
+            if not token_mint:
+                logger.warning(
+                    f"⚠️ No valid token mint found for transaction: {signature}"
+                )
+                return
+
+            # Check if the token was minted before this transaction
+            if not self.is_new_token(token_mint):
+                logger.info(
+                    f"⏩ Ignoring token {token_mint}: Already minted before this transaction."
+                )
+                return
+
+            logger.info(f"✅ Passed Step 5: Token {token_mint} is newly minted.")
+
+            if token_mint in known_tokens:
+                logger.debug(f"⏩ Ignoring known token: {token_mint}")
+                return
+
+            if token_mint == "So11111111111111111111111111111111111111112":
+                logger.info("⏩ Ignoring transaction: This is a SOL transaction.")
+                return
 
             market_cap = "N/A"
 
@@ -96,22 +117,28 @@ class HeliusConnector:
             time_str = now.strftime("%H:%M:%S")
 
             filename = f"transactions_{date_str}.csv"
-            risk_file = f"transactions_risky_{date_str}.csv"
-            self.excel_utility.save_to_csv(
-                self.excel_utility.TRANSACTIONS_DIR,
-                risk_file,
-                {
-                    "Timestamp": [f"{date_str} {time_str}"],
-                    "Signature": [signature],
-                    "Token Mint": [token_mint],
-                    "Token Owner": [token_owner],
-                    "Liquidity (Estimated)": [liquidity],
-                    "Market Cap": [market_cap],
-                    "Honeypot": "Yes",
-                },
-            )
+            rug_check_file = f"rug_check_{date_str}.csv"
+            if self.rug_check_utility.check_token_security(token_mint):
+                self.excel_utility.save_to_csv(
+                    self.excel_utility.TOKENS_DIR,
+                    rug_check_file,
+                    {
+                        "Timestamp": [f"{date_str} {time_str}"],
+                        "Signature": [signature],
+                        "Token Mint": [token_mint],
+                        "Token Owner": [token_owner],
+                        "Liquidity (Estimated)": [liquidity],
+                        "Market Cap": [market_cap],
+                        "Honeypot": "Yes",
+                    },
+                )
+                logger.info(
+                    f"✅ New Token Data Saved: {token_mint} (Signature: {signature}) - passed rug-check"
+                )
 
-            if not self.token_simulator.is_honeypot(token_mint, 10000):
+            if not self.token_simulator.is_honeypot(
+                token_mint
+            ) and not self.rug_check_utility.is_liquidity_unlocked(token_mint):
                 self.excel_utility.save_to_csv(
                     self.excel_utility.TRANSACTIONS_DIR,
                     filename,
@@ -124,9 +151,9 @@ class HeliusConnector:
                         "Market Cap": [market_cap],
                     },
                 )
-            logger.info(
-                f"✅ New Token Data Saved: {token_mint} (Signature: {signature})"
-            )
+                logger.info(
+                    f"✅ New Token Data Saved: {token_mint} (Signature: {signature}) - passed transaction"
+                )
 
         except Exception as e:
             logger.error(f"❌ Error fetching transaction data: {e}")
@@ -163,14 +190,14 @@ class HeliusConnector:
 
     def on_open(self, ws):
         """Subscribe to logs for new liquidity pools on Raydium AMM."""
-        logger.info("WebSocket connected. Subscribing to Raydium AMM logs...")
+        logger.info("Subscribing to Raydium AMM logs...")
         self.raydium_payload["id"] = self.id
         self.id += 1
         ws.send(json.dumps(self.raydium_payload))
         logger.info("✅ Successfully subscribed to AMM liquidity logs.")
 
     def on_message(self, ws, message):
-        """Handles incoming WebSocket messages for detecting new tokens quickly and accurately."""
+        """Handles incoming WebSocket messages for detecting new Raydium tokens on Solana."""
         try:
             if not message:
                 logger.error("❌ Received an empty WebSocket message.")
@@ -182,17 +209,14 @@ class HeliusConnector:
                 logger.error(f"❌ Error decoding WebSocket message: {e}")
                 return
 
-            # Extract essential details
+            # Extract transaction details
             result = data.get("params", {}).get("result", {})
             context = result.get("context", {})
             value = result.get("value", {})
-
             slot = context.get("slot", None)
             signature = value.get("signature", "")
             logs = value.get("logs", [])
             error = value.get("err", None)
-            pre_token_balances = value.get("preTokenBalances", [])
-            post_token_balances = value.get("postTokenBalances", [])
             block_time = value.get("blockTime", None)
 
             # Ignore failed transactions
@@ -202,62 +226,68 @@ class HeliusConnector:
                 )
                 return
 
-            # Check if this is a **mint** transaction faster
+            # Step 1: Detect Mint Transaction
             if not any(
-                "Instruction: InitializeMint" in log for log in logs
-            ) and not any("Instruction: CreateAccount" in log for log in logs):
-                logger.debug(f"⏩ Ignoring non-token mint transaction: {signature}")
-                return
-
-            logger.info(
-                f"✅ Passed Step 1: Detected 'InitializeMint' or 'CreateAccount' instruction."
-            )
-
-            # Ensure it's a truly new token by checking **postTokenBalances**
-            if pre_token_balances and len(post_token_balances) > len(
-                pre_token_balances
+                "Instruction: InitializeMint" in log
+                or "Instruction: InitializeMint2" in log
+                for log in logs
             ):
-                logger.debug(
-                    f"⏩ Ignoring transaction (Token already existed): {signature}"
-                )
-                return
-
-            logger.info("✅ Passed Step 2: Token is new and not in preTokenBalances.")
-
-            #  Get exact time from blockchain to ensure **fresh tokens**
-            if block_time is None:
-                block_time = (
-                    self.latest_block_time - (321794320 - slot) * 0.4
-                )  # Approximate fallback
-            else:
-                self.latest_block_time = block_time
-
-            current_time = int(time.time())
-            token_age_threshold = 30
-
-            if current_time - block_time > token_age_threshold:
-                logger.warning(
-                    f"⚠️ Ignoring old transaction: {signature} (Slot: {slot})"
-                )
+                logger.debug(f"⏩ Ignoring non-mint transaction: {signature}")
                 return
 
             logger.info(
-                f"✅ Passed Step 3: Transaction is within {token_age_threshold} seconds."
+                f"✅ Passed Step 1: Detected 'InitializeMint' or 'InitializeMint2' instruction."
             )
+            logger.debug(f"Logs first step: {logs}")
 
-            #  Ensure we **ignore duplicate detections**
+            # Step 4: Ensure the Transaction is Recent (Within 30 Seconds)
+            current_time = int(time.time())
+
+            if block_time:
+                if (current_time - block_time) > 30:
+                    logger.warning(
+                        f"⚠️ Ignoring old transaction: {signature} (BlockTime: {block_time})"
+                    )
+                    return
+            else:
+                latest_slot = self.get_latest_slot()
+                if (latest_slot - slot) * 0.4 > 30:  # Approximate fallback
+                    logger.warning(
+                        f"⚠️ Ignoring old transaction: {signature} (Slot: {slot})"
+                    )
+                    return
+
+            logger.info(f"✅ Passed Step 3: Transaction is within 30 seconds.")
+
+            # Step 5: Ignore Duplicate Detections
             if signature in signature_queue:
                 logger.debug(f"⏩ Ignoring duplicate signature: {signature}")
                 return
 
-            logger.info(f"✅ Passed Step 4: Unique new token detected: {signature}")
-
-            #
-            signature_queue.append(signature)
             logger.info(
-                f"🎯 New Token Detected: {signature} (Slot: {slot}) queue size:{len(signature_queue)}"
+                f"✅ Passed Step 4: Unique new Raydium token detected: {signature}"
             )
 
+            # Add to detected queue
+            signature_queue.append(signature)
+            logger.info(
+                f"🎯 New Raydium Token Detected: {signature} (Slot: {slot}) | Program: Raydium AMM"
+            )
+
+            # Step 7: Store in CSV
+            now = datetime.now()
+            date_str = now.strftime("%Y-%m-%d %H:%M:%S")
+            file = "raydium_new_tokens.csv"
+
+            self.excel_utility.save_to_csv(
+                self.excel_utility.SIGNATURES_DIR,
+                file,
+                {
+                    "Timestamp": [date_str],
+                    "Signature": [signature],
+                    "Block Time": [block_time if block_time else "N/A"],
+                },
+            )
         except Exception as e:
             logger.error(f"❌ Error processing WebSocket message: {e}", exc_info=True)
 
@@ -270,3 +300,38 @@ class HeliusConnector:
         logger.warning("WebSocket connection closed. Reconnecting in 5s...")
         time.sleep(5)
         self.start_ws()  # Auto-reconnect
+
+    def on_error(self, ws, error):
+        """Handles WebSocket errors."""
+        logger.error(f"WebSocket error: {error}")
+
+    def is_new_token(self, mint_address):
+        """Check if a token is newly minted within the last 30 seconds using blockTime if available."""
+        self.token_address_payload["id"] = self.id
+        self.id += 1
+        self.token_address_payload["params"][0] = mint_address
+
+        response = self.requests_utility.post(
+            endpoint=self.api_key["API_KEY"], payload=self.token_address_payload
+        )
+
+        if "result" in response and response["result"]:
+            first_tx = response["result"][-1]
+            # Use blockTime if available for precise comparison
+            if "blockTime" in first_tx and first_tx["blockTime"] is not None:
+                current_time = int(time.time())
+                return (current_time - first_tx["blockTime"]) < 30
+            # Fallback: Use slot-based estimation if blockTime is missing
+            oldest_tx_slot = first_tx["slot"]
+            latest_slot = self.get_latest_slot()
+            return (latest_slot - oldest_tx_slot) < int(30 / 0.4)
+
+        return False
+
+    def get_latest_slot(self):
+        self.lastest_slot_paylaod["id"] = self.id
+        self.id += 1
+        response = self.requests_utility.post(
+            endpoint=self.api_key["API_KEY"], payload=self.lastest_slot_paylaod
+        )
+        return response.get("result", 0)

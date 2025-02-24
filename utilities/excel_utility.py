@@ -20,7 +20,7 @@ class ExcelUtility:
         os.makedirs(self.SIGNATURES_DIR, exist_ok=True)
         os.makedirs(self.TRANSACTIONS_DIR, exist_ok=True)
         os.makedirs(self.TOKENS_DIR, exist_ok=True)
-        logger.info("succefully created folders ..")
+        logger.info("✅ Successfully created folders ..")
 
     def save_to_csv(self, directory, filename, data):
         filepath = os.path.join(directory, filename)

@@ -20,3 +20,8 @@ class CredentialsUtility:
         logger.info("retriving solana private key ...")
         self.api_key = os.environ["SOLANA_PRIVATE_KEY"]
         return {"SOLANA_PRIVATE_KEY": self.api_key}
+
+    def get_discord_token(self):
+        logger.info("retriving discord token ...")
+        self.api_key = os.environ["DISCORD_TOKEN"]
+        return {"DISCORD_TOKEN": self.api_key}
