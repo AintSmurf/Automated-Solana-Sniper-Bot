@@ -5,7 +5,8 @@
     "params": [
         "SIGNATURE_PLACEHOLDER",
         {
-            "maxSupportedTransactionVersion": 0
+            "maxSupportedTransactionVersion": 0,
+            "commitment": "finalized"
         }
     ]
 }

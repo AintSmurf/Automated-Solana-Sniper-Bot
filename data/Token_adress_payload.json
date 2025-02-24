@@ -1,0 +1,11 @@
+{
+    "id": "ID_PLACE_HOLDER",
+    "jsonrpc": "2.0",
+    "method": "getSignaturesForAddress",
+    "params": [
+        "SIGNATURE_PLACEHOLDER",
+        {
+            "limit": 10
+        }
+    ]
+}

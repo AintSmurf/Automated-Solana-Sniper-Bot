@@ -27,11 +27,9 @@ class LoggingHandler:
         error_file = os.path.join(ERROR_DIR, "errors.log")
 
         # Rotating handlers (Max size: 10MB, 5 backups)
-        log_handler = RotatingFileHandler(
-            log_file, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
-        )
+        log_handler = RotatingFileHandler(log_file, maxBytes=25_000, encoding="utf-8")
         debug_handler = RotatingFileHandler(
-            debug_file, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
+            debug_file, maxBytes=25_000, encoding="utf-8"
         )
         error_handler = logging.FileHandler(error_file, mode="a", encoding="utf-8")
 
