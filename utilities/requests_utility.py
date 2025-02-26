@@ -1,6 +1,6 @@
 import json
 import requests
-from helpers.logging_handler import LoggingHandler
+from helpers.logging_manager import LoggingHandler
 
 # set up logger
 logger = LoggingHandler.get_logger()

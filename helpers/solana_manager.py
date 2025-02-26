@@ -2,9 +2,8 @@ from solana.rpc.api import Client
 from solana.rpc.types import TokenAccountOpts
 from solders.keypair import Keypair  # type: ignore
 from solders.pubkey import Pubkey  # type: ignore
-from spl.token.client import Token
-from spl.token.instructions import create_idempotent_associated_token_account
-from helpers.logging_handler import LoggingHandler
+from spl.token.instructions import create_associated_token_account
+from helpers.logging_manager import LoggingHandler
 from utilities.credentials_utility import CredentialsUtility
 from utilities.requests_utility import RequestsUtility
 from spl.token.instructions import get_associated_token_address
@@ -14,8 +13,9 @@ from solana.transaction import Transaction
 from solders.transaction import VersionedTransaction
 from solders.message import MessageV0
 from config.urls import JUPITER_STATION
-from helpers.framework_helper import get_payload
-
+from helpers.framework_manager import get_payload
+import base64
+from solders.signature import Signature
 
 # Set up logger
 logger = LoggingHandler.get_logger()
@@ -28,6 +28,7 @@ class SolanaHandler:
         self.jupiter_requests = RequestsUtility(JUPITER_STATION["BASE_URL"])
         self.transaction_simulation_paylod = get_payload("Transaction_simulation")
         self.swap_payload = get_payload("Swap_token_payload")
+        self.send_transaction_payload = get_payload("Send_transaction")
         self.api_key = credentials_utility.get_helius_api_key()
         self._private_key_solana = credentials_utility.get_solana_private_wallet_key()
         self.url = HELIUS_URL["BASE_URL"] + self.api_key["API_KEY"]
@@ -36,10 +37,10 @@ class SolanaHandler:
             self._private_key_solana["SOLANA_PRIVATE_KEY"]
         )
         self.wallet_address = self.keypair.pubkey()
-
         logger.debug(
             f"Initialized TransactionHandler with wallet: {self.wallet_address}"
         )
+        self.id = 1
 
     def get_account_balances(self) -> list:
         logger.debug(f"Fetching token balances for wallet: {self.wallet_address}")
@@ -111,7 +112,7 @@ class SolanaHandler:
             # ✅ Use the idempotent function to create an ATA if it doesn't exist
             transaction = Transaction()
             transaction.add(
-                create_idempotent_associated_token_account(
+                create_associated_token_account(
                     payer=self.wallet_address,
                     owner=self.wallet_address,
                     mint=token_mint_pubkey,
@@ -145,45 +146,23 @@ class SolanaHandler:
             logger.error(f"❌ Failed to create token account: {e}")
             return None
 
-    def buy_token(self, token_mint: str, amount: int):
-        """
-        Placeholder function for buying tokens using Helius.
-        """
-        logger.info(f"🔄 Initiating buy order for {amount} of token {token_mint}")
+    def send_transaction(self, input_mint, output_mint, usd_amount):
+        logger.info(
+            f"🔄 Initiating buy order for {usd_amount}$ worth\ntoken_bought:{output_mint}\ntoken_sold:{input_mint}"
+        )
         try:
-            # Placeholder: Call Helius API for swap
-            response = {"status": "pending", "message": "Helius API integration needed"}
-            logger.debug(f"Buy Token Response: {response}")
-
-            if response.get("status") == "pending":
-                logger.info(
-                    f"✅ Buy order placed successfully for {amount} {token_mint}."
-                )
-            else:
-                logger.warning(f"⚠️ Buy order might have failed.")
-
+            token_amount = self.get_solana_token_worth_in_dollars(usd_amount)
+            qoute = self.get_quote(input_mint, output_mint, token_amount)
+            txn_64 = self.get_swap_transaction(qoute)
+            self.send_transaction_payload["params"][0] = txn_64
+            self.send_transaction_payload["id"] = self.id
+            self.id += 1
+            response = self.helius_requests.post(
+                self.api_key["API_KEY"], payload=self.send_transaction_payload
+            )
+            logger.info(response)
         except Exception as e:
             logger.error(f"❌ Failed to place buy order: {e}")
-
-    def sell_token(self, token_mint: str, amount: int):
-        """
-        Placeholder function for selling tokens using Helius.
-        """
-        logger.info(f"🔄 Initiating sell order for {amount} of token {token_mint}")
-        try:
-            # Placeholder: Call Helius API for swap
-            response = {"status": "pending", "message": "Helius API integration needed"}
-            logger.debug(f"Sell Token Response: {response}")
-
-            if response.get("status") == "pending":
-                logger.info(
-                    f"✅ Sell order placed successfully for {amount} {token_mint}."
-                )
-            else:
-                logger.warning(f"⚠️ Sell order might have failed.")
-
-        except Exception as e:
-            logger.error(f"❌ Failed to place sell order: {e}")
 
     def get_sol_price(self):
         response = self.jupiter_requests.get(
@@ -191,11 +170,35 @@ class SolanaHandler:
         )
         return response["data"]["So11111111111111111111111111111111111111112"]["price"]
 
-    def get_tokens_worth_in_dollards(self):
-        sol_price = self.get_sol_price()
-        sol_amount_needed = 25 / sol_price
+    def get_solana_token_worth_in_dollars(self, usd_amount):
+        sol_price = float(self.get_sol_price())
+        sol_amount_needed = usd_amount / sol_price
         converted_tokens = int(sol_amount_needed * 10**9)
-        sol_quote = self.get_quote(token_mint, base_mint, converted_tokens)
+        return converted_tokens
+
+    def get_token_worth_in_usd(self, token_mint, usd_amount):
+        try:
+            solana_tokens = self.get_solana_token_worth_in_dollars(usd_amount)
+            token_quote = self.get_quote(
+                "So11111111111111111111111111111111111111112", token_mint, solana_tokens
+            )
+
+            if "outAmount" not in token_quote:
+                raise ValueError(f"❌ Failed to get token quote for {token_mint}")
+
+            raw_token_amount = int(token_quote["outAmount"])
+
+            # ✅ Step 1: Fetch the token's decimals
+            token_decimals = self.get_token_decimals(token_mint)
+
+            # ✅ Step 2: Convert the raw amount to real token amount
+            token_amount = raw_token_amount / (10**token_decimals)
+
+            return token_amount
+
+        except Exception as e:
+            logger.error(f"❌ Error getting token worth in USD: {e}")
+            return None
 
     def get_quote(
         self,
@@ -247,10 +250,26 @@ class SolanaHandler:
                 return None
 
             swap_txn_base64 = swap_response["swapTransaction"]
-            logger.info(f"✅ Built swap transaction (Base64)")
-            logger.debug(f"✅ Built swap transaction (Base64): {swap_txn_base64}")
 
-            return swap_txn_base64
+            # Verify if swap_txn_base64 is valid base64
+            try:
+                raw_bytes = base64.b64encode(swap_txn_base64)
+                logger.info(f"✅ Swap transaction is valid base64: {raw_bytes}")
+                raw_tx = VersionedTransaction.from_bytes(raw_bytes)
+                signed_tx = VersionedTransaction(raw_tx.message, [self.wallet_address])
+                logger.info(
+                    f"signed transaction{signed_tx}, wallet address{self.wallet_address}"
+                )
+                if signed_tx:
+                    try:
+                        tx_signature = str(signed_tx[0])
+                        logger.info(f"transaction signture: {tx_signature}")
+                    except Exception as e:
+                        logger.error("ftransaction failed error {e}")
+            except Exception as e:
+                logger.error(f"❌ Swap transaction is not valid base64: {e}")
+
+            return swap_txn_base64, tx_signature
 
         except Exception as e:
             logger.error(f"❌ Error building swap transaction: {e}")
@@ -258,11 +277,7 @@ class SolanaHandler:
 
     def simulate_transaction(self, transaction_base64):
         """Simulate a transaction using Helius RPC"""
-        self.transaction_simulation_paylod["params"] = [
-            transaction_base64,
-            {"encoding": "base64"},
-        ]
-
+        self.transaction_simulation_paylod["params"][0] = transaction_base64
         try:
             response = self.helius_requests.post(
                 endpoint=self.api_key["API_KEY"],
@@ -294,7 +309,6 @@ class SolanaHandler:
     def is_honeypot(self, token_mint):
         base_mint = "So11111111111111111111111111111111111111112"
         quote = self.get_quote(token_mint, base_mint, 10000)
-        print(quote)
         transaction_base64 = self.get_swap_transaction(quote)
 
         if not transaction_base64:
@@ -341,3 +355,22 @@ class SolanaHandler:
 
         logger.info(f"✅ Token {token_mint} passed honeypot check.")
         return False
+
+    def get_token_decimals(self, token_mint):
+        try:
+            response = self.client.get_token_supply(token_mint)
+
+            if "value" in response and "decimals" in response["value"]:
+                return int(response["value"]["decimals"])
+            else:
+                logger.warning(
+                    f"⚠️ Failed to retrieve decimals for {token_mint}, defaulting to 6."
+                )
+                return 6
+
+        except Exception as e:
+            logger.error(f"❌ Error getting token decimals: {e}")
+            return 6
+
+    def transaction_validtor(self):
+        pass

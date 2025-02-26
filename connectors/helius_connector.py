@@ -5,9 +5,9 @@ from datetime import datetime
 from utilities.credentials_utility import CredentialsUtility
 from utilities.excel_utility import ExcelUtility
 from utilities.requests_utility import RequestsUtility
-from helpers.logging_handler import LoggingHandler
-from helpers.solana_handler import SolanaHandler
-from helpers.framework_helper import get_payload
+from helpers.logging_manager import LoggingHandler
+from helpers.solana_manager import SolanaHandler
+from helpers.framework_manager import get_payload
 from config.urls import HELIUS_URL
 from config.web_socket import HELIUS
 from collections import deque
@@ -136,9 +136,7 @@ class HeliusConnector:
                     f"✅ New Token Data Saved: {token_mint} (Signature: {signature}) - passed rug-check"
                 )
 
-            if not self.token_simulator.is_honeypot(
-                token_mint
-            ) and not self.rug_check_utility.is_liquidity_unlocked(token_mint):
+            if not self.rug_check_utility.is_liquidity_unlocked(token_mint):
                 self.excel_utility.save_to_csv(
                     self.excel_utility.TRANSACTIONS_DIR,
                     filename,
