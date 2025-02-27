@@ -17,11 +17,18 @@ class RequestsUtility:
             f"URL:{self.url}, Response Json: {self.rs_json}"
         )
 
-    def get(self, endpoint, headers=None, expected_status_code=200) -> json:
+    def get(
+        self, endpoint, payload=None, headers=None, expected_status_code=200
+    ) -> json:
         if not headers:
             headers = {"Content-Type": "application/json"}
         self.url = self.base_url + endpoint
-        rs_api = requests.get(url=self.url)
+        logger.debug(f"Sending GET request to: {self.url} with params: {payload}")
+
+        if payload:
+            rs_api = requests.get(url=self.url, params=payload, headers=headers)
+        else:
+            rs_api = requests.get(url=self.url)
         self.rs_status_code = rs_api.status_code
         self.expected_status_code = expected_status_code
         self.rs_json = rs_api.json()

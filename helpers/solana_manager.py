@@ -2,20 +2,23 @@ from solana.rpc.api import Client
 from solana.rpc.types import TokenAccountOpts
 from solders.keypair import Keypair  # type: ignore
 from solders.pubkey import Pubkey  # type: ignore
+from solders.transaction import VersionedTransaction  # type: ignore
+from solders.message import MessageV0  # type: ignore
+from solders.signature import Signature  # type: ignore
 from spl.token.instructions import create_associated_token_account
 from helpers.logging_manager import LoggingHandler
 from utilities.credentials_utility import CredentialsUtility
 from utilities.requests_utility import RequestsUtility
 from spl.token.instructions import get_associated_token_address
-from config.urls import HELIUS_URL
+from config.urls import HELIUS_URL, JUPITER_STATION, RAYDIUM
 import struct
 from solana.transaction import Transaction
-from solders.transaction import VersionedTransaction
-from solders.message import MessageV0
 from config.urls import JUPITER_STATION
 from helpers.framework_manager import get_payload
 import base64
-from solders.signature import Signature
+import math
+import requests
+
 
 # Set up logger
 logger = LoggingHandler.get_logger()
@@ -25,9 +28,11 @@ class SolanaHandler:
     def __init__(self):
         self.helius_requests = RequestsUtility(HELIUS_URL["BASE_URL"])
         credentials_utility = CredentialsUtility()
+        self.raydium_requests = RequestsUtility(RAYDIUM["BASE_URL"])
         self.jupiter_requests = RequestsUtility(JUPITER_STATION["BASE_URL"])
         self.transaction_simulation_paylod = get_payload("Transaction_simulation")
         self.swap_payload = get_payload("Swap_token_payload")
+        self.liquidity_payload = get_payload("Liquidity_payload")
         self.send_transaction_payload = get_payload("Send_transaction")
         self.api_key = credentials_utility.get_helius_api_key()
         self._private_key_solana = credentials_utility.get_solana_private_wallet_key()
@@ -146,7 +151,9 @@ class SolanaHandler:
             logger.error(f"❌ Failed to create token account: {e}")
             return None
 
-    def send_transaction(self, input_mint, output_mint, usd_amount):
+    def send_transaction(
+        self, input_mint: str, output_mint: str, usd_amount: int
+    ) -> None:
         logger.info(
             f"🔄 Initiating buy order for {usd_amount}$ worth\ntoken_bought:{output_mint}\ntoken_sold:{input_mint}"
         )
@@ -164,19 +171,21 @@ class SolanaHandler:
         except Exception as e:
             logger.error(f"❌ Failed to place buy order: {e}")
 
-    def get_sol_price(self):
+    def get_sol_price(self) -> float:
         response = self.jupiter_requests.get(
             "/price/v2?ids=So11111111111111111111111111111111111111112"
         )
-        return response["data"]["So11111111111111111111111111111111111111112"]["price"]
+        return float(
+            response["data"]["So11111111111111111111111111111111111111112"]["price"]
+        )
 
-    def get_solana_token_worth_in_dollars(self, usd_amount):
+    def get_solana_token_worth_in_dollars(self, usd_amount: int) -> float:
         sol_price = float(self.get_sol_price())
         sol_amount_needed = usd_amount / sol_price
         converted_tokens = int(sol_amount_needed * 10**9)
         return converted_tokens
 
-    def get_token_worth_in_usd(self, token_mint, usd_amount):
+    def get_token_worth_in_usd(self, token_mint: str, usd_amount: int):
         try:
             solana_tokens = self.get_solana_token_worth_in_dollars(usd_amount)
             token_quote = self.get_quote(
@@ -192,7 +201,7 @@ class SolanaHandler:
             token_decimals = self.get_token_decimals(token_mint)
 
             # ✅ Step 2: Convert the raw amount to real token amount
-            token_amount = raw_token_amount / (10**token_decimals)
+            token_amount = math.ceil(raw_token_amount / (10**token_decimals))
 
             return token_amount
 
@@ -229,16 +238,16 @@ class SolanaHandler:
                 logger.error(f"❌ Error retrieving quote: {e} Logs {quote_response}")
         return None
 
-    def get_swap_transaction(self, quote_response):
+    def get_swap_transaction(self, quote_response: dict):
         """Get a swap transaction from Jupiter API (Raydium/Orca)"""
         if not quote_response or "error" in quote_response:
-            logger.error(f"❌ there is error in quote: {quote_response}")
+            logger.error(f"❌ There is an error in quote: {quote_response}")
             return None
 
         try:
-            #  Step 2: Get the Transaction Payload
             self.swap_payload["userPublicKey"] = str(self.keypair.pubkey())
             self.swap_payload["quoteResponse"] = quote_response
+
             swap_response = self.jupiter_requests.post(
                 endpoint=JUPITER_STATION["SWAP_ENDPOINT"], payload=self.swap_payload
             )
@@ -251,25 +260,33 @@ class SolanaHandler:
 
             swap_txn_base64 = swap_response["swapTransaction"]
 
-            # Verify if swap_txn_base64 is valid base64
             try:
-                raw_bytes = base64.b64encode(swap_txn_base64)
-                logger.info(f"✅ Swap transaction is valid base64: {raw_bytes}")
+                raw_bytes = base64.b64decode(swap_txn_base64)
+                logger.info(f"✅ Swap transaction decoded successfully")
                 raw_tx = VersionedTransaction.from_bytes(raw_bytes)
-                signed_tx = VersionedTransaction(raw_tx.message, [self.wallet_address])
-                logger.info(
-                    f"signed transaction{signed_tx}, wallet address{self.wallet_address}"
+                signed_tx = VersionedTransaction(raw_tx.message, [self.keypair])
+                logger.debug(
+                    f"Signed transaction: {signed_tx}, Wallet address: {self.wallet_address}"
                 )
-                if signed_tx:
-                    try:
-                        tx_signature = str(signed_tx[0])
-                        logger.info(f"transaction signture: {tx_signature}")
-                    except Exception as e:
-                        logger.error("ftransaction failed error {e}")
-            except Exception as e:
-                logger.error(f"❌ Swap transaction is not valid base64: {e}")
+                logger.info(
+                    f"Signed transaction for Wallet address: {self.wallet_address}"
+                )
+                seralized_tx = bytes(signed_tx)
+                signed_tx_base64 = base64.b64encode(seralized_tx).decode("utf-8")
+                logger.debug(f"signed base64 transaction: {signed_tx_base64}")
+                logger.info(f"signed base64 transaction")
+                try:
+                    tx_signature = str(signed_tx.signatures[0])
+                    logger.info(f"Transaction signature: {tx_signature}")
+                except Exception as e:
+                    logger.error(f"❌ Transaction signature extraction failed: {e}")
+                    tx_signature = None
 
-            return swap_txn_base64, tx_signature
+            except Exception as e:
+                logger.error(f"❌ Swap transaction is not valid Base64: {e}")
+                return None
+
+            return signed_tx_base64
 
         except Exception as e:
             logger.error(f"❌ Error building swap transaction: {e}")
@@ -306,7 +323,10 @@ class SolanaHandler:
             logger.error(f"❌ Error simulating transaction: {e}")
             return False
 
-    def is_honeypot(self, token_mint):
+    def is_honeypot(
+        self,
+        token_mint: str,
+    ):
         base_mint = "So11111111111111111111111111111111111111112"
         quote = self.get_quote(token_mint, base_mint, 10000)
         transaction_base64 = self.get_swap_transaction(quote)
@@ -356,12 +376,16 @@ class SolanaHandler:
         logger.info(f"✅ Token {token_mint} passed honeypot check.")
         return False
 
-    def get_token_decimals(self, token_mint):
+    def get_token_decimals(
+        self,
+        token_mint: str,
+    ) -> int:
         try:
+            token_mint = Pubkey.from_string(token_mint)
             response = self.client.get_token_supply(token_mint)
 
-            if "value" in response and "decimals" in response["value"]:
-                return int(response["value"]["decimals"])
+            if response.value.decimals:
+                return math.ceil(response.value.decimals)
             else:
                 logger.warning(
                     f"⚠️ Failed to retrieve decimals for {token_mint}, defaulting to 6."
@@ -374,3 +398,74 @@ class SolanaHandler:
 
     def transaction_validtor(self):
         pass
+
+    def get_token_supply(self, mint_address: str) -> float:
+        """Fetch total token supply from Solana RPC and scale it correctly."""
+        try:
+            token_mint = Pubkey.from_string(mint_address)
+            response = self.client.get_token_supply(token_mint)
+            if response.value:
+                supply = float(response.value.ui_amount)
+                decimals = int(response.value.decimals)
+                return supply / (10**decimals)
+
+        except Exception as e:
+            print(f"❌ Error fetching token supply: {e}")
+
+        return 0
+
+    def get_raydium_marketcap(self, token_mint: str) -> float:
+        try:
+
+            self.liquidity_payload["mint1"] = token_mint
+            response_data = self.raydium_requests.get(
+                endpoint=RAYDIUM["LIQUIDITY"], payload=self.liquidity_payload
+            )
+
+            if not response_data.get("data") or not response_data["data"].get("data"):
+                logger.error(f"No liquidity pool found for token: {token_mint}")
+                return 0
+
+            pool_data = response_data["data"]["data"][0]
+
+            token_price = float(pool_data.get("price", 0))
+            sol_price = self.get_sol_price()
+
+            if token_price > 10 and sol_price:
+                token_price *= sol_price
+
+            total_supply = self.get_token_supply(token_mint)
+            decimals = self.get_token_decimals(token_mint)
+            total_supply /= 10**decimals
+
+            if token_price <= 0 or total_supply <= 0:
+                logger.warning(
+                    f"Invalid price ({token_price}) or supply ({total_supply}) for {token_mint}"
+                )
+                return 0
+
+            market_cap = total_supply * token_price
+            logger.info(f"✅ Market Cap for {token_mint}: {market_cap}")
+
+            return market_cap
+
+        except Exception as e:
+            logger.error(f"❌ Error fetching market cap: {e}")
+            return 0
+
+    def get_raydium_liquidity(self, token_mint: str) -> float:
+        self.liquidity_payload["mint1"] = token_mint
+        try:
+            response_data = self.raydium_requests.get(
+                endpoint=RAYDIUM["LIQUIDITY"], payload=self.liquidity_payload
+            )
+
+            if response_data.get("data") and response_data["data"].get("data"):
+                pool_data = response_data["data"]["data"][0]
+                tvl = float(pool_data.get("tvl", 0))
+                return tvl
+
+        except Exception as e:
+            logger.error(f"❌ Error fetching liquidity: {e}")
+
+        return 0

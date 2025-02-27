@@ -12,6 +12,7 @@ from config.urls import HELIUS_URL
 from config.web_socket import HELIUS
 from collections import deque
 from utilities.rug_check_utility import RugCheckUtility
+import requests
 
 
 # set up logger
@@ -26,11 +27,11 @@ seen_tokens = set()
 
 
 class HeliusConnector:
-    def __init__(self, devnet=None):
+    def __init__(self, devnet=False):
         logger.info("Initializing Helius WebSocket connection...")
         credentials_utility = CredentialsUtility()
         self.excel_utility = ExcelUtility()
-        self.token_simulator = SolanaHandler()
+        self.solana_manger = SolanaHandler()
         self.requests_utility = RequestsUtility(HELIUS_URL["BASE_URL"])
         self.api_key = credentials_utility.get_helius_api_key()
         self.latest_block_time = int(time.time())
@@ -81,11 +82,6 @@ class HeliusConnector:
             post_balances = (
                 tx_data.get("result", {}).get("meta", {}).get("postBalances", [])
             )
-            liquidity = (
-                pre_balances[0] - post_balances[0]
-                if len(pre_balances) > 0 and len(post_balances) > 0
-                else 0
-            )
             logger.debug(f"transaction response:{tx_data}")
             if not token_mint:
                 logger.warning(
@@ -109,7 +105,7 @@ class HeliusConnector:
             if token_mint == "So11111111111111111111111111111111111111112":
                 logger.info("⏩ Ignoring transaction: This is a SOL transaction.")
                 return
-
+            liquidity = self.solana_manger.get_raydium_liquidity(token_mint)
             market_cap = "N/A"
 
             now = datetime.now()
@@ -136,7 +132,10 @@ class HeliusConnector:
                     f"✅ New Token Data Saved: {token_mint} (Signature: {signature}) - passed rug-check"
                 )
 
-            if not self.rug_check_utility.is_liquidity_unlocked(token_mint):
+            if (
+                not self.rug_check_utility.is_liquidity_unlocked(token_mint)
+                and liquidity > 70000.0
+            ):
                 self.excel_utility.save_to_csv(
                     self.excel_utility.TRANSACTIONS_DIR,
                     filename,
