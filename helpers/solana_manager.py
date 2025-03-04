@@ -18,6 +18,7 @@ from helpers.framework_manager import get_payload
 import base64
 import math
 import requests
+import json
 
 
 # Set up logger
@@ -34,6 +35,7 @@ class SolanaHandler:
         self.swap_payload = get_payload("Swap_token_payload")
         self.liquidity_payload = get_payload("Liquidity_payload")
         self.send_transaction_payload = get_payload("Send_transaction")
+        self.asset_payload = get_payload("Asset_payload")
         self.api_key = credentials_utility.get_helius_api_key()
         self._private_key_solana = credentials_utility.get_solana_private_wallet_key()
         self.url = HELIUS_URL["BASE_URL"] + self.api_key["API_KEY"]
@@ -151,9 +153,7 @@ class SolanaHandler:
             logger.error(f"❌ Failed to create token account: {e}")
             return None
 
-    def send_transaction(
-        self, input_mint: str, output_mint: str, usd_amount: int
-    ) -> None:
+    def buy(self, input_mint: str, output_mint: str, usd_amount: int) -> str:
         logger.info(
             f"🔄 Initiating buy order for {usd_amount}$ worth\ntoken_bought:{output_mint}\ntoken_sold:{input_mint}"
         )
@@ -168,6 +168,7 @@ class SolanaHandler:
                 self.api_key["API_KEY"], payload=self.send_transaction_payload
             )
             logger.info(response)
+            return response["result"]
         except Exception as e:
             logger.error(f"❌ Failed to place buy order: {e}")
 
@@ -209,34 +210,22 @@ class SolanaHandler:
             logger.error(f"❌ Error getting token worth in USD: {e}")
             return None
 
-    def get_quote(
-        self,
-        input_mint,
-        output_mint,
-        amount=1000,
-        slippage=5,
-        retries=3,
-    ):
-        for attempt in range(retries):
-            try:
-                quote_url = f"{JUPITER_STATION['QUOTE_ENDPOINT']}?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage}"
-                quote_response = self.jupiter_requests.get(quote_url)
+    def get_quote(self, input_mint, output_mint, amount=1000, slippage=5):
+        try:
+            quote_url = f"{JUPITER_STATION['QUOTE_ENDPOINT']}?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage}&dexes=Raydium,OpenBook"
+            quote_response = self.jupiter_requests.get(quote_url)
 
-                if "error" in quote_response:
-                    logger.warning(
-                        f"⚠️ Quote attempt {attempt + 1} failed: {quote_response['error']}"
-                    )
-                else:
-                    logger.info(
-                        f"✅ Successfully retrieved quote on attempt {attempt + 1}."
-                    )
-                    logger.debug(
-                        f"build swap transaction:{quote_response} Successfull."
-                    )
-                    return quote_response
-            except Exception as e:
-                logger.error(f"❌ Error retrieving quote: {e} Logs {quote_response}")
-        return None
+            if "error" in quote_response:
+                logger.warning(f"⚠️ Quote attempt failed: {quote_response['error']}")
+                return None
+
+            logger.info(f"✅ Successfully retrieved quote.")
+            logger.debug(f"Build swap transaction: {quote_response} Success.")
+            return quote_response
+
+        except Exception as e:
+            logger.error(f"❌ Error retrieving quote: {e}")
+            return None
 
     def get_swap_transaction(self, quote_response: dict):
         """Get a swap transaction from Jupiter API (Raydium/Orca)"""
@@ -323,59 +312,6 @@ class SolanaHandler:
             logger.error(f"❌ Error simulating transaction: {e}")
             return False
 
-    def is_honeypot(
-        self,
-        token_mint: str,
-    ):
-        base_mint = "So11111111111111111111111111111111111111112"
-        quote = self.get_quote(token_mint, base_mint, 10000)
-        transaction_base64 = self.get_swap_transaction(quote)
-
-        if not transaction_base64:
-            logger.warning(
-                f"⚠️ Could not build swap transaction for token {token_mint}."
-            )
-            return True
-
-        simulation_result = self.simulate_transaction(transaction_base64)
-
-        if not simulation_result:
-            logger.warning(
-                f"⚠️ Token {token_mint} is likely a honeypot (Simulation failed)."
-            )
-            return True
-
-        logs = simulation_result.get("value", {}).get("logs", [])
-
-        honeypot_errors = [
-            "sale not allowed",
-            "transaction blocked",
-            "InvalidSplTokenProgram",
-        ]
-
-        for log in logs:
-            for error in honeypot_errors:
-                if error in log.lower():
-                    logger.warning(f"⚠️ Honeypot detected! Error: {error}")
-                    return True
-
-        jupiter_errors = [
-            "panicked at programs/nostd-token/src",
-            "range end index 64 out of range",
-            "SBF program panicked",
-        ]
-
-        for log in logs:
-            for error in jupiter_errors:
-                if error in log.lower():
-                    logger.warning(
-                        f"⚠️ Jupiter error detected (NOT a honeypot)! Error: {error}"
-                    )
-                    return False
-
-        logger.info(f"✅ Token {token_mint} passed honeypot check.")
-        return False
-
     def get_token_decimals(
         self,
         token_mint: str,
@@ -453,19 +389,124 @@ class SolanaHandler:
             logger.error(f"❌ Error fetching market cap: {e}")
             return 0
 
-    def get_raydium_liquidity(self, token_mint: str) -> float:
-        self.liquidity_payload["mint1"] = token_mint
+    def sell(self, input_mint: str, output_mint: str, usd_amount: int = None) -> None:
+        logger.info(
+            f"🔄 Initiating sell order\nToken Sold: {input_mint}\nToken Received: {output_mint}"
+        )
+
         try:
-            response_data = self.raydium_requests.get(
-                endpoint=RAYDIUM["LIQUIDITY"], payload=self.liquidity_payload
+            token_balances = self.get_account_balances()
+            token_info = next(
+                (t for t in token_balances if t["token_mint"] == input_mint), None
             )
 
-            if response_data.get("data") and response_data["data"].get("data"):
-                pool_data = response_data["data"]["data"][0]
-                tvl = float(pool_data.get("tvl", 0))
-                return tvl
+            if not token_info:
+                logger.warning(f"⚠️ No balance found for token: {input_mint}")
+                return
+
+            token_balance = token_info["balance"]
+            if usd_amount:
+                token_amount = self.get_solana_token_worth_in_dollars(usd_amount)
+                if token_amount > token_balance:
+                    logger.warning(
+                        f"⚠️ Insufficient balance: {token_balance} {input_mint}. Selling full balance."
+                    )
+                    token_amount = token_balance
+            else:
+                token_amount = token_balance
+
+            if token_amount <= 0:
+                logger.warning(f"⚠️ No tokens to sell for {input_mint}")
+                return
+            quote = self.get_quote(input_mint, output_mint, token_amount)
+            txn_64 = self.get_swap_transaction(quote)
+            self.send_transaction_payload["params"][0] = txn_64
+            self.send_transaction_payload["id"] = self.id
+            self.id += 1
+            response = self.helius_requests.post(
+                self.api_key["API_KEY"], payload=self.send_transaction_payload
+            )
+            logger.info(f"✅ Sell order completed: {response}")
 
         except Exception as e:
-            logger.error(f"❌ Error fetching liquidity: {e}")
+            logger.error(f"❌ Failed to place sell order: {e}")
 
-        return 0
+    def is_token_scam(self, response_json, token_mint) -> bool:
+
+        # Check if a swap route exists
+        if "routePlan" not in response_json or not response_json["routePlan"]:
+            logger.warning(f"🚨 No swap route for {token_mint}. Possible honeypot.")
+            return True
+
+        best_route = response_json["routePlan"][0]["swapInfo"]
+        in_amount = float(best_route["inAmount"])
+        out_amount = float(best_route["outAmount"])
+        fee_amount = float(best_route["feeAmount"])
+
+        fee_ratio = fee_amount / in_amount if in_amount > 0 else 0
+        if fee_ratio > 0.05:
+            logger.warning(
+                f"⚠️ High tax detected ({fee_ratio * 100}%). Possible scam token."
+            )
+            return True
+
+        logger.info("token scam test - tax check passed")
+
+        if out_amount == 0:
+            logger.warning(
+                f"🚨 Token has zero output in swap! No liquidity detected for {token_mint}."
+            )
+            return True
+
+        logger.info("token scam test - output check passed")
+
+        if in_amount / out_amount > 10000:
+            logger.warning(
+                f"⚠️ Unreasonable token price ratio for {token_mint}. Possible rug."
+            )
+            return True
+
+        logger.info("token scam test - price ratio check passed")
+        logger.info(f"✅ Token {token_mint} passed Jupiter scam detection.")
+        return False
+
+    def check_scam_functions_helius(self, token_mint: str) -> bool:
+        qoute = self.get_quote(
+            token_mint, "So11111111111111111111111111111111111111112"
+        )
+        if not qoute:
+            return True
+        if self.is_token_scam(qoute, token_mint):
+            return True
+
+        logger.info(f"🔍 Checking smart contract for {token_mint} using Helius...")
+        self.asset_payload["id"] = self.id
+        self.id += 1
+        self.asset_payload["params"]["id"] = token_mint
+        try:
+            response_json = self.helius_requests.post(
+                endpoint=self.api_key["API_KEY"],
+                payload=self.asset_payload,
+            )
+            logger.debug(f"🔍 Raw Helius Response for {response_json}")
+            logger.info(f"🔍 Raw Helius Response for {token_mint}")
+            if "result" not in response_json:
+                logger.warning(
+                    f"⚠️ Unexpected Helius response structure: {response_json}"
+                )
+                return True
+
+            asset_data = response_json["result"]
+
+            if asset_data.get("mutable", True):
+                logger.warning(
+                    f"⚠️ Token {token_mint} is mutable. Devs can change settings anytime. Possible scam."
+                )
+                return True
+
+            logger.info(f"✅ Token {token_mint} is immutable. Safe to proceed.")
+            return False
+
+        except Exception as e:
+            logger.error(f"❌ Error fetching contract code from Helius: {e}")
+            return False

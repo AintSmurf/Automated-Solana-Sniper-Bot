@@ -94,9 +94,6 @@ class Discord_Bot:
         try:
             df = pd.read_csv(filepath)
 
-            if "SentToDiscord" not in df.columns:
-                df["SentToDiscord"] = False  # Ensure column exists
-
             last_processed = self.last_row_counts.get(filepath, 0)
             total_rows = len(df)
 

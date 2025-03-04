@@ -1,8 +1,8 @@
 {
-    "mint1": "TOKEN_MINT_PLACE_HOLDER",
-    "poolType": "all",
-    "poolSortField": "default",
-    "sortType": "desc",
-    "pageSize": 1,
-    "page": 1
+    "id": "1",
+    "jsonrpc": "2.0",
+    "method": "getProgramAccounts",
+    "params": [
+        "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7D4xWLs4gDB4T"
+    ]
 }

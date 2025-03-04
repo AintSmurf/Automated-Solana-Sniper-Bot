@@ -8,17 +8,17 @@ logger = LoggingHandler.get_logger()
 
 class RequestsUtility:
 
-    def __init__(self, base_url):
+    def __init__(self, base_url: str):
         self.base_url = base_url
 
-    def assert_status_code(self):
+    def assert_status_code(self) -> None:
         assert self.rs_status_code == self.expected_status_code, (
             f"Expected status code {self.expected_status_code} but actual status code is {self.rs_status_code}\n"
             f"URL:{self.url}, Response Json: {self.rs_json}"
         )
 
     def get(
-        self, endpoint, payload=None, headers=None, expected_status_code=200
+        self, endpoint: str, payload=None, headers=None, expected_status_code=200
     ) -> json:
         if not headers:
             headers = {"Content-Type": "application/json"}
@@ -39,7 +39,7 @@ class RequestsUtility:
         return rs_api.json()
 
     def post(
-        self, endpoint=None, payload=None, headers=None, expected_status_code=200
+        self, endpoint: str, payload=None, headers=None, expected_status_code=200
     ) -> json:
         if not headers:
             headers = {"Content-Type": "application/json"}
