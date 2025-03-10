@@ -3,11 +3,9 @@ from discord_bot.bot import Discord_Bot
 from connectors.helius_connector import HeliusConnector
 from helpers.logging_manager import LoggingHandler
 from helpers.solana_manager import SolanaHandler
-from connectors.liquidity_connector import DataManager
 from utilities.rug_check_utility import RugCheckUtility
 import threading
 import time
-import base64
 
 # set up logger
 logger = LoggingHandler.get_logger()
@@ -42,9 +40,19 @@ def main():
 def test():
     # pass
     # helius_connector = HeliusConnector()
-    # rug = RugCheckUtility()
-    # print(rug.is_liquidity_unlocked("8QhSMvYfXome11VgxFMD75hNbGQXW5QTnjA8khENkY2c"))
+    rug = RugCheckUtility()
+    print(rug.is_liquidity_unlocked("7ioXWR8cfGBuVywBsJNots5zvw7xCaJe5xdBh66A8gNB"))
     solana_manager = SolanaHandler()
+    liq = solana_manager.get_liqudity("CRQRS919RU9vhFxHTHZsVnrgfK68H1a1LZ3qkvcepump")
+
+    print(type(liq), liq)  # Debugging output
+    print(f"Liquidity check result: {liq}")  # Explicit output
+
+    if liq < 1000000:
+        print("🚨 Liquidity is too low!")
+    else:
+        print("✅ Liquidity is fine!")
+
     # print(
     #     solana_manager.get_raydium_marketcap(
     #         "53pKGZ9JAvkpMEmfdhm3epX9bVRjLJaBGjSgHAWipump"
@@ -65,9 +73,9 @@ def test():
     # print(rg.is_liquidity_unlocked("CCYBBVkocwTk85qT4jbb8k65u2ufYkjoyrdFkUPKGVs6"))
     # sl = SolanaHandler()
     # sl.add_token_account("AvNXHBAk9wSQWeVPzTTYJp5VCpnW73fBdp7ijbyrpump")
-    solana_manager.check_scam_functions_helius(
-        "5U69kri5SNr8J6cdN6pFnSHnsjKyfeMWW98gASL8pump"
-    )
+    # solana_manager.check_scam_functions_helius(
+    #     "5U69kri5SNr8J6cdN6pFnSHnsjKyfeMWW98gASL8pump"
+    # )
     # amount = solana_manager.get_token_worth_in_usd(
     #     "CRQRS919RU9vhFxHTHZsVnrgfK68H1a1LZ3qkvcepump", 25
     # )
@@ -92,4 +100,4 @@ def test():
 
 
 if __name__ == "__main__":
-    test()
+    main()

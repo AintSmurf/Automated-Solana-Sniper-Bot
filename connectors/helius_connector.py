@@ -11,8 +11,7 @@ from helpers.framework_manager import get_payload
 from config.urls import HELIUS_URL
 from config.web_socket import HELIUS
 from collections import deque
-from utilities.rug_check_utility import RugCheckUtility
-import requests
+from helpers.liquidity_tracker import LiquidityTracker
 
 
 # set up logger
@@ -30,11 +29,13 @@ class HeliusConnector:
         logger.info("Initializing Helius WebSocket connection...")
         credentials_utility = CredentialsUtility()
         self.excel_utility = ExcelUtility()
-        self.solana_manger = SolanaHandler()
+        self.solana_manager = SolanaHandler()
         self.requests_utility = RequestsUtility(HELIUS_URL["BASE_URL"])
+        self.liquidity_tracker = LiquidityTracker(
+            self.solana_manager, self.excel_utility
+        )
         self.api_key = credentials_utility.get_helius_api_key()
         self.latest_block_time = int(time.time())
-        self.rug_check_utility = RugCheckUtility()
         if devnet:
             self.wss_url = HELIUS["LOGS_SOCKET_DEVNET"] + self.api_key["API_KEY"]
         else:
@@ -75,12 +76,6 @@ class HeliusConnector:
                 post_token_balances[0]["owner"] if post_token_balances else "N/A"
             )
 
-            pre_balances = (
-                tx_data.get("result", {}).get("meta", {}).get("preBalances", [])
-            )
-            post_balances = (
-                tx_data.get("result", {}).get("meta", {}).get("postBalances", [])
-            )
             logger.debug(f"transaction response:{tx_data}")
             if not token_mint:
                 logger.warning(
@@ -104,34 +99,38 @@ class HeliusConnector:
             if token_mint == "So11111111111111111111111111111111111111112":
                 logger.info("⏩ Ignoring transaction: This is a SOL transaction.")
                 return
-            liquidity = 0
+            liquidity = self.solana_manager.get_liqudity(token_mint)
             market_cap = "N/A"
 
             now = datetime.now()
             date_str = now.strftime("%Y-%m-%d")
             time_str = now.strftime("%H:%M:%S")
             filename = f"safe_tokens_{date_str}.csv"
-            if not self.rug_check_utility.is_liquidity_unlocked(
-                token_mint
-            ) and not self.solana_manger.check_scam_functions_helius(token_mint):
-                known_tokens.add(token_mint)
-                self.excel_utility.save_to_csv(
-                    self.excel_utility.TOKENS_DIR,
-                    filename,
-                    {
-                        "Timestamp": [f"{date_str} {time_str}"],
-                        "Signature": [signature],
-                        "Token Mint": [token_mint],
-                        "Token Owner": [token_owner],
-                        "Liquidity (Estimated)": [liquidity],
-                        "Market Cap": [market_cap],
-                    },
-                )
-                logger.info(
-                    f"✅ New Token Data Saved: {token_mint} (Signature: {signature}) - passed transaction"
-                )
+            if liquidity > 10000:
+                if not self.solana_manager.check_scam_functions_helius(token_mint):
+                    known_tokens.add(token_mint)
+                    self.excel_utility.save_to_csv(
+                        self.excel_utility.TOKENS_DIR,
+                        filename,
+                        {
+                            "Timestamp": [f"{date_str} {time_str}"],
+                            "Signature": [signature],
+                            "Token Mint": [token_mint],
+                            "Token Owner": [token_owner],
+                            "Liquidity (Estimated)": [liquidity],
+                            "Market Cap": [market_cap],
+                            "SentToDiscord": False,
+                        },
+                    )
+                    logger.info(
+                        f"✅ New Token Data Saved: {token_mint} (Signature: {signature}) - passed transaction"
+                    )
+                    self.liquidity_tracker.track_token(token_mint, liquidity)
+                else:
+                    logger.info(f"failed tests {token_mint}")
+                return
             else:
-                logger.warning(f"liquidity is too low: {liquidity}")
+                logger.info(f"liquidity lower than 10k {liquidity}")
                 return
 
         except Exception as e:
@@ -176,7 +175,7 @@ class HeliusConnector:
         logger.info("✅ Successfully subscribed to AMM liquidity logs.")
 
     def on_message(self, ws, message) -> None:
-        """Handles incoming WebSocket messages for detecting new Raydium tokens on Solana."""
+        """Handles incoming WebSocket messages for detecting new Raydium and Pump.fun tokens on Solana."""
         try:
             if not message:
                 logger.error("❌ Received an empty WebSocket message.")
@@ -204,20 +203,28 @@ class HeliusConnector:
                     f"⚠️ Ignoring failed transaction: {signature} (Error: {error})"
                 )
                 return
-            # Step 1: Detect Mint Transaction
-            if not any(
-                "Instruction: InitializeMint" in log
-                or "Instruction: InitializeMint2" in log
-                for log in logs
-            ):
+
+            # Detect Pump.fun token creation first
+            is_pump_fun_creation = (
+                any("Instruction: Create" in log for log in logs)
+                and any("Instruction: InitializeMint2" in log for log in logs)
+                and any("Metaplex Token Metadata" in log for log in logs)
+            )
+            if not is_pump_fun_creation:
+                # Detect Raydium mint (if it's not Pump.fun)
+                is_raydium_mint = not is_pump_fun_creation and any(
+                    "Instruction: InitializeMint" in log
+                    or "Instruction: InitializeMint2" in log
+                    for log in logs
+                )
+
+            if not is_raydium_mint and not is_pump_fun_creation:
                 logger.debug(f"⏩ Ignoring non-mint transaction: {signature}")
                 return
 
             logger.info(
-                f"✅ Passed Step 1: Detected a new token mint or Pump.fun buy event."
+                f"✅ Passed Step 1: Detected a new token mint (Raydium or Pump.fun)."
             )
-
-            logger.debug(f"Logs first step: {logs}")
 
             # Step 2: Ensure the Transaction is Recent (Within 30 Seconds)
             current_time = int(time.time())
@@ -238,35 +245,41 @@ class HeliusConnector:
 
             logger.info(f"✅ Passed Step 2: Transaction is within 30 seconds.")
 
-            # Step 5: Ignore Duplicate Detections
+            # Step 3: Ignore Duplicate Detections
             if signature in signature_queue:
                 logger.debug(f"⏩ Ignoring duplicate signature: {signature}")
                 return
 
-            logger.info(
-                f"✅ Passed Step 3: Unique new Raydium token detected: {signature}"
-            )
+            logger.info(f"✅ Passed Step 3: Unique new token detected: {signature}")
 
             # Add to detected queue
             signature_queue.append(signature)
-            logger.info(
-                f"🎯 New Raydium Token Detected: {signature} (Slot: {slot}) | Program: Raydium AMM"
-            )
 
-            # Step 7: Store in CSV
+            if is_raydium_mint:
+                logger.info(
+                    f"🎯 New Raydium Token Detected: {signature} (Slot: {slot}) | Program: Raydium AMM"
+                )
+                csv_file = "raydium_new_tokens.csv"
+            else:
+                logger.info(
+                    f"🚀 New Pump.fun Token Detected: {signature} (Slot: {slot}) | Program: Pump.fun"
+                )
+                csv_file = "pump_fun_tokens.csv"
+
+            # Step 4: Store in CSV
             now = datetime.now()
             date_str = now.strftime("%Y-%m-%d %H:%M:%S")
-            file = "raydium_new_tokens.csv"
 
             self.excel_utility.save_to_csv(
                 self.excel_utility.SIGNATURES_DIR,
-                file,
+                csv_file,
                 {
                     "Timestamp": [date_str],
                     "Signature": [signature],
                     "Block Time": [block_time if block_time else "N/A"],
                 },
             )
+
         except Exception as e:
             logger.error(f"❌ Error processing WebSocket message: {e}", exc_info=True)
 

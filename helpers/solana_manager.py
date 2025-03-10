@@ -17,8 +17,7 @@ from config.urls import JUPITER_STATION
 from helpers.framework_manager import get_payload
 import base64
 import math
-import requests
-import json
+from utilities.rug_check_utility import RugCheckUtility
 
 
 # Set up logger
@@ -31,6 +30,7 @@ class SolanaHandler:
         credentials_utility = CredentialsUtility()
         self.raydium_requests = RequestsUtility(RAYDIUM["BASE_URL"])
         self.jupiter_requests = RequestsUtility(JUPITER_STATION["BASE_URL"])
+        self.rug_check_utility = RugCheckUtility()
         self.transaction_simulation_paylod = get_payload("Transaction_simulation")
         self.swap_payload = get_payload("Swap_token_payload")
         self.liquidity_payload = get_payload("Liquidity_payload")
@@ -498,15 +498,30 @@ class SolanaHandler:
 
             asset_data = response_json["result"]
 
-            if asset_data.get("mutable", True):
-                logger.warning(
-                    f"⚠️ Token {token_mint} is mutable. Devs can change settings anytime. Possible scam."
-                )
-                return True
+            if asset_data.get("mutable", True) and asset_data.get("authorities", []):
+                if self.rug_check_utility.is_liquidity_unlocked(token_mint) == True:
+                    logger.warning(
+                        f"🚨 Token {token_mint} is mutable, owned by dev, AND liquidity is NOT locked! HIGH RISK."
+                    )
+                    return True
+                else:
+                    logger.info(
+                        f"⚠️ Token {token_mint} is mutable & dev-owned, but liquidity is locked. Might be safe."
+                    )
 
-            logger.info(f"✅ Token {token_mint} is immutable. Safe to proceed.")
+            logger.info(f"✅ Token {token_mint}  Safe to proceed.")
             return False
 
         except Exception as e:
             logger.error(f"❌ Error fetching contract code from Helius: {e}")
             return False
+
+    def get_liqudity(self, token_mint) -> float:
+        liquidity = self.rug_check_utility.get_liquidity(token_mint) or 0
+        try:
+            return float(liquidity)
+        except ValueError:
+            logger.warning(
+                f"⚠️ Unexpected liquidity format for {token_mint}: {liquidity}"
+            )
+            return 0
