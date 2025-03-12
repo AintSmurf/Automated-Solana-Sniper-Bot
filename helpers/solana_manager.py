@@ -18,6 +18,7 @@ from helpers.framework_manager import get_payload
 import base64
 import math
 from utilities.rug_check_utility import RugCheckUtility
+import requests
 
 
 # Set up logger
@@ -36,6 +37,7 @@ class SolanaHandler:
         self.liquidity_payload = get_payload("Liquidity_payload")
         self.send_transaction_payload = get_payload("Send_transaction")
         self.asset_payload = get_payload("Asset_payload")
+        self.largest_accounts_payload = get_payload("Largets_accounts")
         self.api_key = credentials_utility.get_helius_api_key()
         self._private_key_solana = credentials_utility.get_solana_private_wallet_key()
         self.url = HELIUS_URL["BASE_URL"] + self.api_key["API_KEY"]
@@ -179,6 +181,18 @@ class SolanaHandler:
         return float(
             response["data"]["So11111111111111111111111111111111111111112"]["price"]
         )
+
+    def get_token_price(self, token_mint: str) -> float:
+        url = f"https://public-api.birdeye.so/defi/price?include_liquidity=true&address={token_mint}"
+
+        headers = {
+            "accept": "application/json",
+            "x-chain": "solana",
+            "X-API-KEY": "01876fc6d5944c7e80b57b0b929c1a4c",
+        }
+        response = requests.get(url, headers=headers)
+        logger.info(f"response: {response.json()}")
+        return response.json()["data"]["value"]
 
     def get_solana_token_worth_in_dollars(self, usd_amount: int) -> float:
         sol_price = float(self.get_sol_price())
@@ -342,8 +356,7 @@ class SolanaHandler:
             response = self.client.get_token_supply(token_mint)
             if response.value:
                 supply = float(response.value.ui_amount)
-                decimals = int(response.value.decimals)
-                return supply / (10**decimals)
+                return supply
 
         except Exception as e:
             print(f"❌ Error fetching token supply: {e}")
@@ -483,13 +496,13 @@ class SolanaHandler:
         self.asset_payload["id"] = self.id
         self.id += 1
         self.asset_payload["params"]["id"] = token_mint
+
         try:
             response_json = self.helius_requests.post(
                 endpoint=self.api_key["API_KEY"],
                 payload=self.asset_payload,
             )
             logger.debug(f"🔍 Raw Helius Response for {response_json}")
-            logger.info(f"🔍 Raw Helius Response for {token_mint}")
             if "result" not in response_json:
                 logger.warning(
                     f"⚠️ Unexpected Helius response structure: {response_json}"
@@ -497,9 +510,34 @@ class SolanaHandler:
                 return True
 
             asset_data = response_json["result"]
+            token_info = asset_data.get("token_info", {})
 
+            ##  Check Mint Authority (Prevents Rug Pulls)
+            mint_authority = token_info.get("mint_authority", None)
+            if mint_authority:
+                logger.warning(
+                    f"🚨 Token {token_mint} still has mint authority ({mint_authority})! HIGH RISK."
+                )
+                return True
+
+            ## Check Freeze Authority (Prevents Wallet Freezing)
+            freeze_authority = token_info.get("freeze_authority", None)
+            if freeze_authority:
+                logger.warning(
+                    f"🚨 Token {token_mint} has freeze authority ({freeze_authority})! Devs can freeze funds. HIGH RISK."
+                )
+                return True
+
+            ##  Check Burn Status
+            if asset_data.get("burnt", False):
+                logger.warning(
+                    f"🔥 Token {token_mint} is burnt and cannot be used anymore."
+                )
+                return True
+
+            ##  Check Mutability & Ownership
             if asset_data.get("mutable", True) and asset_data.get("authorities", []):
-                if self.rug_check_utility.is_liquidity_unlocked(token_mint) == True:
+                if self.rug_check_utility.is_liquidity_unlocked(token_mint):
                     logger.warning(
                         f"🚨 Token {token_mint} is mutable, owned by dev, AND liquidity is NOT locked! HIGH RISK."
                     )
@@ -509,19 +547,93 @@ class SolanaHandler:
                         f"⚠️ Token {token_mint} is mutable & dev-owned, but liquidity is locked. Might be safe."
                     )
 
-            logger.info(f"✅ Token {token_mint}  Safe to proceed.")
+            logger.info(f"✅ Token {token_mint} Safe to proceed.")
             return False
 
         except Exception as e:
             logger.error(f"❌ Error fetching contract code from Helius: {e}")
             return False
 
-    def get_liqudity(self, token_mint) -> float:
-        liquidity = self.rug_check_utility.get_liquidity(token_mint) or 0
+    def get_liqudity(self, new_token_mint: str) -> float:
         try:
-            return float(liquidity)
-        except ValueError:
-            logger.warning(
-                f"⚠️ Unexpected liquidity format for {token_mint}: {liquidity}"
+            url = f"https://public-api.birdeye.so/defi/price?include_liquidity=true&address={new_token_mint}"
+
+            headers = {
+                "accept": "application/json",
+                "x-chain": "solana",
+                "X-API-KEY": "01876fc6d5944c7e80b57b0b929c1a4c",
+            }
+            response = requests.get(url, headers=headers)
+            logger.info(f"response: {response.json()}")
+            return response.json()["data"]["liquidity"]
+
+        except Exception as e:
+            logger.error(f"failed to retrive liquidity: {e}")
+
+        return None
+
+    def get_largest_accounts(self, token_mint: str):
+        """Fetch largest token holders and analyze risk."""
+        logger.info(f"🔍 Checking smart contract for {token_mint} using Helius...")
+
+        # Update payload with token mint
+        self.largest_accounts_payload["id"] = self.id
+        self.id += 1
+        self.largest_accounts_payload["params"][0] = token_mint
+
+        try:
+            response_json = self.helius_requests.post(
+                endpoint=self.api_key["API_KEY"],
+                payload=self.largest_accounts_payload,
             )
-            return 0
+
+            logger.debug(f"🔍 Raw Helius Largest Accounts Response: {response_json}")
+
+            if "result" not in response_json:
+                logger.warning(
+                    f"⚠️ Unexpected Helius response structure: {response_json}"
+                )
+                return True
+
+            holders = response_json["result"]["value"]
+            total_supply = self.get_token_supply(token_mint)
+
+            if total_supply == 0:
+                logger.error("❌ Failed to fetch token supply. Skipping analysis.")
+                return False
+
+            # Sort holders by balance (highest to lowest)
+            sorted_holders = sorted(
+                holders, key=lambda x: float(x["uiAmount"]), reverse=True
+            )
+
+            # Extract top holders and calculate their percentage of TOTAL SUPPLY
+            top_holders = sorted_holders[:10]
+            top_holder_percentages = [
+                (float(holder["uiAmount"]) / total_supply) * 100
+                for holder in top_holders
+            ]
+
+            # Check if the top holder has over 5%
+            if top_holder_percentages[0] > 5:
+                logger.debug("top holder has more than 5%")
+                return True
+
+            # Check for Identical Holders from Position 2-10
+            if len(top_holder_percentages) > 1:
+                min_percentage = min(top_holder_percentages[1:])
+                max_percentage = max(top_holder_percentages[1:])
+                if abs(max_percentage - min_percentage) < 0.01:
+                    logger.debug("bot accounts to rug pull")
+                    return True
+                # check if the rest of the wallets have higher liquidty than the developer
+                if top_holder_percentages[0] < max_percentage:
+                    logger.debug("top holder has lower perecntage its rug pull")
+                    return True
+
+            logger.info("\n✅ Token Holder Analysis Complete.")
+            return False
+
+        except Exception as e:
+            logger.error(f"❌ Error fetching largest accounts from Helius: {e}")
+        return True

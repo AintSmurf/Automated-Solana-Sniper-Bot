@@ -11,7 +11,6 @@ from helpers.framework_manager import get_payload
 from config.urls import HELIUS_URL
 from config.web_socket import HELIUS
 from collections import deque
-from helpers.liquidity_tracker import LiquidityTracker
 
 
 # set up logger
@@ -31,9 +30,6 @@ class HeliusConnector:
         self.excel_utility = ExcelUtility()
         self.solana_manager = SolanaHandler()
         self.requests_utility = RequestsUtility(HELIUS_URL["BASE_URL"])
-        self.liquidity_tracker = LiquidityTracker(
-            self.solana_manager, self.excel_utility
-        )
         self.api_key = credentials_utility.get_helius_api_key()
         self.latest_block_time = int(time.time())
         if devnet:
@@ -64,6 +60,7 @@ class HeliusConnector:
             tx_data = self.requests_utility.post(
                 endpoint=self.api_key["API_KEY"], payload=self.transaction_payload
             )
+            logger.debug(f"transaction test:{tx_data}")
 
             post_token_balances = (
                 tx_data.get("result", {}).get("meta", {}).get("postTokenBalances", [])
@@ -76,6 +73,9 @@ class HeliusConnector:
                 post_token_balances[0]["owner"] if post_token_balances else "N/A"
             )
 
+            post_balances = (
+                tx_data.get("result", {}).get("meta", {}).get("postBalances", [])
+            )
             logger.debug(f"transaction response:{tx_data}")
             if not token_mint:
                 logger.warning(
@@ -107,7 +107,9 @@ class HeliusConnector:
             time_str = now.strftime("%H:%M:%S")
             filename = f"safe_tokens_{date_str}.csv"
             if liquidity > 10000:
-                if not self.solana_manager.check_scam_functions_helius(token_mint):
+                if not self.solana_manager.check_scam_functions_helius(
+                    token_mint
+                ) and self.solana_manager.get_largest_accounts(token_mint):
                     known_tokens.add(token_mint)
                     self.excel_utility.save_to_csv(
                         self.excel_utility.TOKENS_DIR,
@@ -125,7 +127,6 @@ class HeliusConnector:
                     logger.info(
                         f"✅ New Token Data Saved: {token_mint} (Signature: {signature}) - passed transaction"
                     )
-                    self.liquidity_tracker.track_token(token_mint, liquidity)
                 else:
                     logger.info(f"failed tests {token_mint}")
                 return

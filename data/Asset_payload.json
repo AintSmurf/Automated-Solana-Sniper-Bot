@@ -3,6 +3,6 @@
     "id": "ID_PLACE_HOLDER",
     "method": "getAsset",
     "params": {
-        "id": "TOKEN_ADDRESS_PLACE_JOLDER"
+        "id": "TOKEN_ADDRESS_PLACE_HOLDER"
     }
 }

@@ -38,20 +38,9 @@ def main():
 
 
 def test():
-    # pass
+    sl = SolanaHandler()
+    print(sl.get_largest_accounts("84tb3prxC8PvcUksYv8kX2sgKPnWPqAgctDjwiPCYcy8"))
     # helius_connector = HeliusConnector()
-    rug = RugCheckUtility()
-    print(rug.is_liquidity_unlocked("7ioXWR8cfGBuVywBsJNots5zvw7xCaJe5xdBh66A8gNB"))
-    solana_manager = SolanaHandler()
-    liq = solana_manager.get_liqudity("CRQRS919RU9vhFxHTHZsVnrgfK68H1a1LZ3qkvcepump")
-
-    print(type(liq), liq)  # Debugging output
-    print(f"Liquidity check result: {liq}")  # Explicit output
-
-    if liq < 1000000:
-        print("🚨 Liquidity is too low!")
-    else:
-        print("✅ Liquidity is fine!")
 
     # print(
     #     solana_manager.get_raydium_marketcap(

@@ -3,7 +3,6 @@ import asyncio
 import os
 import pandas as pd
 from discord.ext import commands
-import logging
 from utilities.credentials_utility import CredentialsUtility
 from utilities.excel_utility import ExcelUtility
 from datetime import datetime
@@ -69,12 +68,12 @@ class Discord_Bot:
         await self.send_message_to_discord("solana_tokens", message)
 
     async def watch_excel_for_updates(self):
-        """Watches both the Rug Check and Transactions Check files for new entries."""
         while True:
+            logger.debug("📊 Checking for new Excel entries...")
             now = datetime.now()
             date_str = now.strftime("%Y-%m-%d")
             transactions_file = f"transactions_{date_str}.csv"
-            rug_check_file = f"rug_check_{date_str}.csv"
+            rug_check_file = f"safe_tokens_{date_str}.csv"
 
             await self.check_and_send_new_entries(
                 self.excel_utility.TRANSACTIONS_DIR, transactions_file, 2
@@ -83,7 +82,7 @@ class Discord_Bot:
                 self.excel_utility.TOKENS_DIR, rug_check_file, 1
             )
 
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
 
     async def check_and_send_new_entries(self, folder, filename, message_type):
         """Reads the transactions file, sends new data to Discord, and updates the file."""
@@ -120,12 +119,12 @@ class Discord_Bot:
 
                 df.to_csv(filepath, index=False)  # Save changes
                 logger.info(f"✅ Updated {filename}, marked sent messages.")
+                logger.info(f"token: {token_mint} sent to discord")
                 self.last_row_counts[filepath] = total_rows
 
         except Exception as e:
             logger.error(f"❌ Error reading/updating {filename}: {e}")
 
     async def run(self):
-        """Runs the bot and starts watching Excel files for updates."""
         asyncio.create_task(self.watch_excel_for_updates())
         await self.bot.start(self.token["DISCORD_TOKEN"])

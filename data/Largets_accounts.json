@@ -1,0 +1,8 @@
+{
+    "jsonrpc": "2.0",
+    "id": "ID_PLACE_HOLDER",
+    "method": "getTokenLargestAccounts",
+    "params": [
+        "TOKEN_ADDRESS_PLACE_HOLDER"
+    ]
+}
