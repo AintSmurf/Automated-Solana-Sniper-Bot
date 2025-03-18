@@ -564,7 +564,8 @@ class SolanaHandler:
                 "X-API-KEY": "01876fc6d5944c7e80b57b0b929c1a4c",
             }
             response = requests.get(url, headers=headers)
-            logger.info(f"response: {response.json()}")
+            logger.info(response.json())
+            logger.debug(f"response: {response.json()}")
             return response.json()["data"]["liquidity"]
 
         except Exception as e:

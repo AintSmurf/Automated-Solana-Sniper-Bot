@@ -21,6 +21,8 @@ signature_queue = deque(maxlen=500)
 
 latest_block_time = int(time.time())
 known_tokens = set()
+signature_cache = set()
+OPENBOOK_PROGRAM_ID = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
 
 
 class HeliusConnector:
@@ -73,9 +75,6 @@ class HeliusConnector:
                 post_token_balances[0]["owner"] if post_token_balances else "N/A"
             )
 
-            post_balances = (
-                tx_data.get("result", {}).get("meta", {}).get("postBalances", [])
-            )
             logger.debug(f"transaction response:{tx_data}")
             if not token_mint:
                 logger.warning(
@@ -99,7 +98,8 @@ class HeliusConnector:
             if token_mint == "So11111111111111111111111111111111111111112":
                 logger.info("⏩ Ignoring transaction: This is a SOL transaction.")
                 return
-            liquidity = self.solana_manager.get_liqudity(token_mint)
+            # liquidity = self.solana_manager.get_liqudity(token_mint)
+            liquidity = 0
             market_cap = "N/A"
 
             now = datetime.now()
@@ -109,7 +109,7 @@ class HeliusConnector:
             if liquidity > 10000:
                 if not self.solana_manager.check_scam_functions_helius(
                     token_mint
-                ) and self.solana_manager.get_largest_accounts(token_mint):
+                ) and not self.solana_manager.get_largest_accounts(token_mint):
                     known_tokens.add(token_mint)
                     self.excel_utility.save_to_csv(
                         self.excel_utility.TOKENS_DIR,
@@ -125,7 +125,7 @@ class HeliusConnector:
                         },
                     )
                     logger.info(
-                        f"✅ New Token Data Saved: {token_mint} (Signature: {signature}) - passed transaction"
+                        f"✅ New Token Data Saved: {token_mint} (Signature: {signature}) - passed tests"
                     )
                 else:
                     logger.info(f"failed tests {token_mint}")
@@ -198,34 +198,30 @@ class HeliusConnector:
             error = value.get("err", None)
             block_time = value.get("blockTime", None)
 
+            logger.debug(f"transaction response:{data}")
+
             # Ignore failed transactions
             if error is not None:
                 logger.debug(
                     f"⚠️ Ignoring failed transaction: {signature} (Error: {error})"
                 )
                 return
+            if signature in signature_cache:
+                return
+            signature_cache.add(signature)
 
-            # Detect Pump.fun token creation first
-            is_pump_fun_creation = (
-                any("Instruction: Create" in log for log in logs)
-                and any("Instruction: InitializeMint2" in log for log in logs)
-                and any("Metaplex Token Metadata" in log for log in logs)
+            if len(signature_cache) > 5000:
+                signature_cache.clear()
+
+            is_token_creation = any(
+                "Instruction: InitializeMint2" in log for log in logs
             )
-            if not is_pump_fun_creation:
-                # Detect Raydium mint (if it's not Pump.fun)
-                is_raydium_mint = not is_pump_fun_creation and any(
-                    "Instruction: InitializeMint" in log
-                    or "Instruction: InitializeMint2" in log
-                    for log in logs
-                )
 
-            if not is_raydium_mint and not is_pump_fun_creation:
-                logger.debug(f"⏩ Ignoring non-mint transaction: {signature}")
+            # Skip if not a token mint
+            if not is_token_creation:
                 return
 
-            logger.info(
-                f"✅ Passed Step 1: Detected a new token mint (Raydium or Pump.fun)."
-            )
+            logger.info(f"✅ Passed Step 1")
 
             # Step 2: Ensure the Transaction is Recent (Within 30 Seconds)
             current_time = int(time.time())
@@ -256,21 +252,10 @@ class HeliusConnector:
             # Add to detected queue
             signature_queue.append(signature)
 
-            if is_raydium_mint:
-                logger.info(
-                    f"🎯 New Raydium Token Detected: {signature} (Slot: {slot}) | Program: Raydium AMM"
-                )
-                csv_file = "raydium_new_tokens.csv"
-            else:
-                logger.info(
-                    f"🚀 New Pump.fun Token Detected: {signature} (Slot: {slot}) | Program: Pump.fun"
-                )
-                csv_file = "pump_fun_tokens.csv"
-
             # Step 4: Store in CSV
             now = datetime.now()
             date_str = now.strftime("%Y-%m-%d %H:%M:%S")
-
+            csv_file = "signtures"
             self.excel_utility.save_to_csv(
                 self.excel_utility.SIGNATURES_DIR,
                 csv_file,
@@ -313,7 +298,7 @@ class HeliusConnector:
             # Fallback: Use slot-based estimation if blockTime is missing
             oldest_tx_slot = first_tx["slot"]
             latest_slot = self.get_latest_slot()
-            return (latest_slot - oldest_tx_slot) < int(30 / 0.4)
+            return (latest_slot - oldest_tx_slot) < int(40 / 0.4)
 
         return False
 

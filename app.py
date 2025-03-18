@@ -39,9 +39,11 @@ def main():
 
 def test():
     sl = SolanaHandler()
-    print(sl.get_largest_accounts("84tb3prxC8PvcUksYv8kX2sgKPnWPqAgctDjwiPCYcy8"))
-    # helius_connector = HeliusConnector()
-
+    # print(sl.get_largest_accounts("56myyTZFrzGrEaSbik1fAvKx3i3Qawb2cz3sZdjLmRbm"))
+    helius_connector = HeliusConnector()
+    helius_connector.fetch_transaction(
+        "2oSc3t92d7Jc9ZXzYaTd5PTpKQukz5pBizH3okAb9frgK93HgLz5ueq8RMaTJhAGfUZxah38qqaBxarmx6mrGqGt"
+    )
     # print(
     #     solana_manager.get_raydium_marketcap(
     #         "53pKGZ9JAvkpMEmfdhm3epX9bVRjLJaBGjSgHAWipump"
@@ -89,4 +91,4 @@ def test():
 
 
 if __name__ == "__main__":
-    main()
+    test()
