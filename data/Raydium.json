@@ -5,11 +5,11 @@
     "params": [
         {
             "mentions": [
-                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
             ]
         },
         {
-            "commitment": "confirmed"
+            "commitment": "finalized"
         }
     ]
 }

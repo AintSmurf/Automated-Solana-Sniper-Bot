@@ -39,11 +39,20 @@ def main():
 
 def test():
     sl = SolanaHandler()
-    # print(sl.get_largest_accounts("56myyTZFrzGrEaSbik1fAvKx3i3Qawb2cz3sZdjLmRbm"))
-    helius_connector = HeliusConnector()
-    helius_connector.fetch_transaction(
-        "2oSc3t92d7Jc9ZXzYaTd5PTpKQukz5pBizH3okAb9frgK93HgLz5ueq8RMaTJhAGfUZxah38qqaBxarmx6mrGqGt"
+    helis = HeliusConnector()
+    # sl.buy(
+    #     "So11111111111111111111111111111111111111112",
+    #     "FasH397CeZLNYWkd3wWK9vrmjd1z93n3b59DssRXpump",
+    #     15,
+    # )
+    sl.sell(
+        "FasH397CeZLNYWkd3wWK9vrmjd1z93n3b59DssRXpump",
+        "So11111111111111111111111111111111111111112",
     )
+    # print(sl.get_largest_accounts("56myyTZFrzGrEaSbik1fAvKx3i3Qawb2cz3sZdjLmRbm"))
+    # helis.fetch_transaction(
+    #     "5ZCN8QjQhCrMuLWR9YZTJZjByE6MYYLXvh9eEw11MPvfnT5ik6fv7oRvsc75LBn8YU7VJt8reuS3VUdnKtXvHk9"
+    # )
     # print(
     #     solana_manager.get_raydium_marketcap(
     #         "53pKGZ9JAvkpMEmfdhm3epX9bVRjLJaBGjSgHAWipump"
@@ -78,11 +87,6 @@ def test():
     # )
     # print(quote)
     # print(sl.simulate_transaction(txn64))
-    # solana_manager.buy(
-    #     "So11111111111111111111111111111111111111112",
-    #     "8QhSMvYfXome11VgxFMD75hNbGQXW5QTnjA8khENkY2c",
-    #     15,
-    # )
     # print(solana_manager.get_account_balances())
     # solana_manager.sell(
     #     "8QhSMvYfXome11VgxFMD75hNbGQXW5QTnjA8khENkY2c",
@@ -91,4 +95,4 @@ def test():
 
 
 if __name__ == "__main__":
-    test()
+    main()

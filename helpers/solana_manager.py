@@ -9,6 +9,7 @@ from spl.token.instructions import create_associated_token_account
 from helpers.logging_manager import LoggingHandler
 from utilities.credentials_utility import CredentialsUtility
 from utilities.requests_utility import RequestsUtility
+from utilities.excel_utility import ExcelUtility
 from spl.token.instructions import get_associated_token_address
 from config.urls import HELIUS_URL, JUPITER_STATION, RAYDIUM
 import struct
@@ -19,10 +20,12 @@ import base64
 import math
 from utilities.rug_check_utility import RugCheckUtility
 import requests
+from datetime import datetime
 
 
 # Set up logger
 logger = LoggingHandler.get_logger()
+special_logger = LoggingHandler.get_special_debug_logger()
 
 
 class SolanaHandler:
@@ -32,12 +35,14 @@ class SolanaHandler:
         self.raydium_requests = RequestsUtility(RAYDIUM["BASE_URL"])
         self.jupiter_requests = RequestsUtility(JUPITER_STATION["BASE_URL"])
         self.rug_check_utility = RugCheckUtility()
+        self.excel_utility = ExcelUtility()
         self.transaction_simulation_paylod = get_payload("Transaction_simulation")
         self.swap_payload = get_payload("Swap_token_payload")
         self.liquidity_payload = get_payload("Liquidity_payload")
         self.send_transaction_payload = get_payload("Send_transaction")
         self.asset_payload = get_payload("Asset_payload")
         self.largest_accounts_payload = get_payload("Largets_accounts")
+        self.program_accounts = get_payload("Liquidity_payload")
         self.api_key = credentials_utility.get_helius_api_key()
         self._private_key_solana = credentials_utility.get_solana_private_wallet_key()
         self.url = HELIUS_URL["BASE_URL"] + self.api_key["API_KEY"]
@@ -161,8 +166,28 @@ class SolanaHandler:
         )
         try:
             token_amount = self.get_solana_token_worth_in_dollars(usd_amount)
-            qoute = self.get_quote(input_mint, output_mint, token_amount)
-            txn_64 = self.get_swap_transaction(qoute)
+            quote = self.get_quote(input_mint, output_mint, token_amount)
+            price_per_token = usd_amount / float(quote["outAmount"])
+            print("token prince: ", price_per_token)
+            # adjust key if needed
+            now = datetime.now()
+            date_str = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M:%S")
+            filename = f"bought_tokens_{date_str}.csv"
+            # save all tokens
+            self.excel_utility.save_to_csv(
+                self.excel_utility.BOUGHT_TOKENS,
+                filename,
+                {
+                    "Timestamp": [f"{date_str} {time_str}"],
+                    "Token_sold": [input_mint],
+                    "Token boguht": [output_mint],
+                    "amount": [token_amount],
+                    "USD": [usd_amount],
+                    "type": "BUY",
+                },
+            )
+            txn_64 = self.get_swap_transaction(quote)
             self.send_transaction_payload["params"][0] = txn_64
             self.send_transaction_payload["id"] = self.id
             self.id += 1
@@ -226,7 +251,7 @@ class SolanaHandler:
 
     def get_quote(self, input_mint, output_mint, amount=1000, slippage=5):
         try:
-            quote_url = f"{JUPITER_STATION['QUOTE_ENDPOINT']}?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage}&dexes=Raydium,OpenBook"
+            quote_url = f"{JUPITER_STATION['QUOTE_ENDPOINT']}?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage}"
             quote_response = self.jupiter_requests.get(quote_url)
 
             if "error" in quote_response:
@@ -406,7 +431,6 @@ class SolanaHandler:
         logger.info(
             f"🔄 Initiating sell order\nToken Sold: {input_mint}\nToken Received: {output_mint}"
         )
-
         try:
             token_balances = self.get_account_balances()
             token_info = next(
@@ -418,20 +442,13 @@ class SolanaHandler:
                 return
 
             token_balance = token_info["balance"]
-            if usd_amount:
-                token_amount = self.get_solana_token_worth_in_dollars(usd_amount)
-                if token_amount > token_balance:
-                    logger.warning(
-                        f"⚠️ Insufficient balance: {token_balance} {input_mint}. Selling full balance."
-                    )
-                    token_amount = token_balance
-            else:
-                token_amount = token_balance
+            decimals = self.get_token_decimals(input_mint)
+            raw_amount = int(float(token_balance) * (10**decimals))
 
-            if token_amount <= 0:
+            if token_balance <= 0:
                 logger.warning(f"⚠️ No tokens to sell for {input_mint}")
                 return
-            quote = self.get_quote(input_mint, output_mint, token_amount)
+            quote = self.get_quote(input_mint, output_mint, raw_amount)
             txn_64 = self.get_swap_transaction(quote)
             self.send_transaction_payload["params"][0] = txn_64
             self.send_transaction_payload["id"] = self.id
@@ -440,6 +457,24 @@ class SolanaHandler:
                 self.api_key["API_KEY"], payload=self.send_transaction_payload
             )
             logger.info(f"✅ Sell order completed: {response}")
+            # adjust key if needed
+            now = datetime.now()
+            date_str = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M:%S")
+            filename = f"bought_tokens_{date_str}.csv"
+            # save all tokens
+            self.excel_utility.save_to_csv(
+                self.excel_utility.BOUGHT_TOKENS,
+                filename,
+                {
+                    "Timestamp": [f"{date_str} {time_str}"],
+                    "Token_sold": [input_mint],
+                    "Token boguht": [output_mint],
+                    "amount": [raw_amount],
+                    "USD": [usd_amount],
+                    "type": "SELL",
+                },
+            )
 
         except Exception as e:
             logger.error(f"❌ Failed to place sell order: {e}")
@@ -484,15 +519,17 @@ class SolanaHandler:
         return False
 
     def check_scam_functions_helius(self, token_mint: str) -> bool:
+        # get token worth in usd so it wont fail the jupiter
+        token_amount = self.get_solana_token_worth_in_dollars(15)
         qoute = self.get_quote(
-            token_mint, "So11111111111111111111111111111111111111112"
+            token_mint, "So11111111111111111111111111111111111111112", token_amount
         )
         if not qoute:
-            return True
+            return False
         if self.is_token_scam(qoute, token_mint):
-            return True
+            return False
 
-        logger.info(f"🔍 Checking smart contract for {token_mint} using Helius...")
+        special_logger.info(f"🔍 Checking scams for {token_mint} using Helius...")
         self.asset_payload["id"] = self.id
         self.id += 1
         self.asset_payload["params"]["id"] = token_mint
@@ -502,38 +539,38 @@ class SolanaHandler:
                 endpoint=self.api_key["API_KEY"],
                 payload=self.asset_payload,
             )
-            logger.debug(f"🔍 Raw Helius Response for {response_json}")
+            special_logger.debug(f"🔍 Raw Helius Response for {response_json}")
             if "result" not in response_json:
                 logger.warning(
                     f"⚠️ Unexpected Helius response structure: {response_json}"
                 )
-                return True
+                return False
 
             asset_data = response_json["result"]
             token_info = asset_data.get("token_info", {})
 
             ##  Check Mint Authority (Prevents Rug Pulls)
-            mint_authority = token_info.get("mint_authority", None)
-            if mint_authority:
-                logger.warning(
-                    f"🚨 Token {token_mint} still has mint authority ({mint_authority})! HIGH RISK."
-                )
-                return True
+            # mint_authority = token_info.get("mint_authority", None)
+            # if mint_authority not in [None, ""]:
+            #     logger.warning(
+            #         f"🚨 Token {token_mint} still has mint authority ({mint_authority})! HIGH RISK."
+            #     )
+            #     return False
 
-            ## Check Freeze Authority (Prevents Wallet Freezing)
-            freeze_authority = token_info.get("freeze_authority", None)
-            if freeze_authority:
-                logger.warning(
-                    f"🚨 Token {token_mint} has freeze authority ({freeze_authority})! Devs can freeze funds. HIGH RISK."
-                )
-                return True
+            # ## Check Freeze Authority (Prevents Wallet Freezing)
+            # freeze_authority = token_info.get("freeze_authority", None)
+            # if freeze_authority:
+            #     logger.warning(
+            #         f"🚨 Token {token_mint} has freeze authority ({freeze_authority})! Devs can freeze funds. HIGH RISK."
+            #     )
+            #     return False
 
             ##  Check Burn Status
             if asset_data.get("burnt", False):
                 logger.warning(
                     f"🔥 Token {token_mint} is burnt and cannot be used anymore."
                 )
-                return True
+                return False
 
             ##  Check Mutability & Ownership
             if asset_data.get("mutable", True) and asset_data.get("authorities", []):
@@ -541,14 +578,14 @@ class SolanaHandler:
                     logger.warning(
                         f"🚨 Token {token_mint} is mutable, owned by dev, AND liquidity is NOT locked! HIGH RISK."
                     )
-                    return True
+                    return False
                 else:
                     logger.info(
                         f"⚠️ Token {token_mint} is mutable & dev-owned, but liquidity is locked. Might be safe."
                     )
 
             logger.info(f"✅ Token {token_mint} Safe to proceed.")
-            return False
+            return True
 
         except Exception as e:
             logger.error(f"❌ Error fetching contract code from Helius: {e}")
@@ -575,7 +612,9 @@ class SolanaHandler:
 
     def get_largest_accounts(self, token_mint: str):
         """Fetch largest token holders and analyze risk."""
-        logger.info(f"🔍 Checking smart contract for {token_mint} using Helius...")
+        logger.info(
+            f"🔍 Checking if token holders has the same percentage for {token_mint} using Helius..."
+        )
 
         # Update payload with token mint
         self.largest_accounts_payload["id"] = self.id
@@ -588,13 +627,15 @@ class SolanaHandler:
                 payload=self.largest_accounts_payload,
             )
 
-            logger.debug(f"🔍 Raw Helius Largest Accounts Response: {response_json}")
+            special_logger.debug(
+                f"🔍 Raw Helius Largest Accounts Response: {response_json}"
+            )
 
             if "result" not in response_json:
                 logger.warning(
                     f"⚠️ Unexpected Helius response structure: {response_json}"
                 )
-                return True
+                return False
 
             holders = response_json["result"]["value"]
             total_supply = self.get_token_supply(token_mint)
@@ -615,26 +656,26 @@ class SolanaHandler:
                 for holder in top_holders
             ]
 
-            # Check if the top holder has over 5%
-            if top_holder_percentages[0] > 5:
-                logger.debug("top holder has more than 5%")
-                return True
+            # # Check if the top holder has over 5%
+            # if top_holder_percentages[0] > 5:
+            #     special_logger.debug("top holder has more than 5%")
+            #     return False
 
             # Check for Identical Holders from Position 2-10
             if len(top_holder_percentages) > 1:
                 min_percentage = min(top_holder_percentages[1:])
                 max_percentage = max(top_holder_percentages[1:])
                 if abs(max_percentage - min_percentage) < 0.01:
-                    logger.debug("bot accounts to rug pull")
-                    return True
+                    special_logger.debug("bot accounts to rug pull")
+                    return False
                 # check if the rest of the wallets have higher liquidty than the developer
                 if top_holder_percentages[0] < max_percentage:
-                    logger.debug("top holder has lower perecntage its rug pull")
-                    return True
+                    special_logger.debug("top holder has lower perecntage its rug pull")
+                    return False
 
             logger.info("\n✅ Token Holder Analysis Complete.")
-            return False
+            return True
 
         except Exception as e:
             logger.error(f"❌ Error fetching largest accounts from Helius: {e}")
-        return True
+        return False

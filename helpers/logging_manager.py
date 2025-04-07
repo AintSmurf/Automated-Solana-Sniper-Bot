@@ -2,6 +2,7 @@ import logging
 import os
 import threading
 from logging.handlers import RotatingFileHandler
+import coloredlogs
 
 
 class LoggingHandler:
@@ -45,7 +46,7 @@ class LoggingHandler:
 
             # 🛠️ DEBUG Log File Handler (Only stores DEBUG logs)
             debug_handler = RotatingFileHandler(
-                debug_file, maxBytes=250_000_000, backupCount=5, encoding="utf-8"
+                debug_file, maxBytes=2_500_000_000, backupCount=10, encoding="utf-8"
             )
             debug_handler.setFormatter(
                 logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -81,3 +82,49 @@ class LoggingHandler:
                 if LoggingHandler._logger is None:
                     LoggingHandler._logger = LoggingHandler._setup_logger()
         return LoggingHandler._logger
+
+    @staticmethod
+    def get_special_debug_logger():
+        """Returns a separate logger for special debug cases with colored output."""
+        special_logger = logging.getLogger("special_debug_logger")
+        special_logger.setLevel(logging.DEBUG)
+
+        if not special_logger.handlers:
+            special_debug_file = os.path.join("logs", "debug", "special_debug.log")
+            os.makedirs(os.path.dirname(special_debug_file), exist_ok=True)
+
+            # 📝 File handler for this special log
+            file_handler = RotatingFileHandler(
+                special_debug_file,
+                maxBytes=100_000_000,
+                backupCount=3,
+                encoding="utf-8",
+            )
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(
+                logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            )
+            special_logger.addHandler(file_handler)
+            try:
+
+                coloredlogs.install(
+                    level="DEBUG",
+                    logger=special_logger,
+                    fmt="%(asctime)s - %(levelname)s - %(message)s",
+                    level_styles={
+                        "debug": {"color": "cyan"},
+                        "info": {"color": "green"},
+                        "warning": {"color": "yellow"},
+                        "error": {"color": "red"},
+                        "critical": {"color": "magenta"},
+                    },
+                )
+            except ImportError:
+                stream_handler = logging.StreamHandler()
+                stream_handler.setLevel(logging.DEBUG)
+                stream_handler.setFormatter(
+                    logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+                )
+                special_logger.addHandler(stream_handler)
+
+        return special_logger

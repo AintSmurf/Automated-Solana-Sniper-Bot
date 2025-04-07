@@ -1,8 +1,16 @@
 {
-    "id": "1",
     "jsonrpc": "2.0",
+    "id": 1,
     "method": "getProgramAccounts",
     "params": [
-        "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7D4xWLs4gDB4T"
+        "ammkJSEQLGhX8JUc7MksKuULjx5Fgf6hRfmVv2wmN9g",
+        {
+            "encoding": "base64",
+            "filters": [
+                {
+                    "dataSize": 3228
+                }
+            ]
+        }
     ]
 }

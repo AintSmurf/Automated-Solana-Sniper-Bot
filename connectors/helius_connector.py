@@ -18,15 +18,16 @@ logger = LoggingHandler.get_logger()
 
 # Track processed signatures to avoid duplicates
 signature_queue = deque(maxlen=500)
+signature_cache = deque(maxlen=5000)
+
 
 latest_block_time = int(time.time())
 known_tokens = set()
-signature_cache = set()
 OPENBOOK_PROGRAM_ID = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
 
 
 class HeliusConnector:
-    def __init__(self, devnet=False):
+    def __init__(self, devnet=False, API=None):
         logger.info("Initializing Helius WebSocket connection...")
         credentials_utility = CredentialsUtility()
         self.excel_utility = ExcelUtility()
@@ -81,7 +82,6 @@ class HeliusConnector:
                     f"⚠️ No valid token mint found for transaction: {signature}"
                 )
                 return
-
             # Check if the token was minted before this transaction
             if not self.is_new_token(token_mint):
                 logger.info(
@@ -106,32 +106,41 @@ class HeliusConnector:
             date_str = now.strftime("%Y-%m-%d")
             time_str = now.strftime("%H:%M:%S")
             filename = f"safe_tokens_{date_str}.csv"
-            if liquidity > 10000:
-                if not self.solana_manager.check_scam_functions_helius(
-                    token_mint
-                ) and not self.solana_manager.get_largest_accounts(token_mint):
-                    known_tokens.add(token_mint)
-                    self.excel_utility.save_to_csv(
-                        self.excel_utility.TOKENS_DIR,
-                        filename,
-                        {
-                            "Timestamp": [f"{date_str} {time_str}"],
-                            "Signature": [signature],
-                            "Token Mint": [token_mint],
-                            "Token Owner": [token_owner],
-                            "Liquidity (Estimated)": [liquidity],
-                            "Market Cap": [market_cap],
-                            "SentToDiscord": False,
-                        },
-                    )
-                    logger.info(
-                        f"✅ New Token Data Saved: {token_mint} (Signature: {signature}) - passed tests"
-                    )
-                else:
-                    logger.info(f"failed tests {token_mint}")
-                return
+
+            # save all tokens
+            self.excel_utility.save_to_csv(
+                self.excel_utility.TOKENS_DIR,
+                "all_tokens_found.csv",
+                {
+                    "Timestamp": [f"{date_str} {time_str}"],
+                    "Signature": [signature],
+                    "Token Mint": [token_mint],
+                },
+            )
+
+            if self.solana_manager.check_scam_functions_helius(
+                token_mint
+            ) and self.solana_manager.get_largest_accounts(token_mint):
+                known_tokens.add(token_mint)
+                self.excel_utility.save_to_csv(
+                    self.excel_utility.TOKENS_DIR,
+                    filename,
+                    {
+                        "Timestamp": [f"{date_str} {time_str}"],
+                        "Signature": [signature],
+                        "Token Mint": [token_mint],
+                        "Token Owner": [token_owner],
+                        "Liquidity (Estimated)": [liquidity],
+                        "Market Cap": [market_cap],
+                        "SentToDiscord": False,
+                    },
+                )
+                logger.info(
+                    f"✅ New Token Data Saved: {token_mint} (Signature: {signature}) - passed tests"
+                )
+
             else:
-                logger.info(f"liquidity lower than 10k {liquidity}")
+                logger.info("failed in one of the test functions ...")
                 return
 
         except Exception as e:
@@ -192,7 +201,7 @@ class HeliusConnector:
             result = data.get("params", {}).get("result", {})
             context = result.get("context", {})
             value = result.get("value", {})
-            slot = context.get("slot", None)
+            slot = context.get("slot")
             signature = value.get("signature", "")
             logs = value.get("logs", [])
             error = value.get("err", None)
@@ -200,32 +209,44 @@ class HeliusConnector:
 
             logger.debug(f"transaction response:{data}")
 
-            # Ignore failed transactions
+            # Analyze error (if exists)
             if error is not None:
-                logger.debug(
-                    f"⚠️ Ignoring failed transaction: {signature} (Error: {error})"
-                )
+                if isinstance(error, dict) and "InstructionError" in error:
+                    instr_err = error["InstructionError"][1]
+                    if isinstance(instr_err, dict):
+                        custom_code = instr_err.get("Custom", None)
+                    else:
+                        custom_code = instr_err
+                    hex_code = (
+                        hex(custom_code) if isinstance(custom_code, int) else "N/A"
+                    )
+                    logger.debug(
+                        f"⚠️ TX failed with custom error {custom_code} (hex: {hex_code})"
+                    )
+            else:
+                logger.debug(f"⚠️ TX failed with non-custom error: {error}")
+
+            # Skip the TX only if it didn't actually try to mint
+            mint_initialized = any(
+                "Instruction: InitializeMint" in log
+                or "Instruction: InitializeMint2" in log
+                for log in logs
+            )
+            mint_to_executed = any("Instruction: MintTo" in log for log in logs)
+
+            if not (mint_initialized and mint_to_executed):
+                logger.debug("⛔ Skipping failed TX with no mint activity.")
                 return
+
+            # Check for duplicate
             if signature in signature_cache:
                 return
-            signature_cache.add(signature)
+            signature_cache.append(signature)
 
-            if len(signature_cache) > 5000:
-                signature_cache.clear()
+            logger.info("✅ Passed Step 1: Mint instruction found.")
 
-            is_token_creation = any(
-                "Instruction: InitializeMint2" in log for log in logs
-            )
-
-            # Skip if not a token mint
-            if not is_token_creation:
-                return
-
-            logger.info(f"✅ Passed Step 1")
-
-            # Step 2: Ensure the Transaction is Recent (Within 30 Seconds)
+            # # Step 2: Check if the transaction is recent
             current_time = int(time.time())
-
             if block_time:
                 if (current_time - block_time) > 30:
                     logger.warning(
@@ -239,32 +260,14 @@ class HeliusConnector:
                         f"⚠️ Ignoring old transaction: {signature} (Slot: {slot})"
                     )
                     return
+            logger.info("✅ Passed Step 2: Transaction is within 30 seconds.")
 
-            logger.info(f"✅ Passed Step 2: Transaction is within 30 seconds.")
-
-            # Step 3: Ignore Duplicate Detections
+            # Step 3: Ignore duplicates from queue
             if signature in signature_queue:
-                logger.debug(f"⏩ Ignoring duplicate signature: {signature}")
+                logger.debug(f"⏩ Ignoring duplicate signature from queue: {signature}")
                 return
-
             logger.info(f"✅ Passed Step 3: Unique new token detected: {signature}")
-
-            # Add to detected queue
             signature_queue.append(signature)
-
-            # Step 4: Store in CSV
-            now = datetime.now()
-            date_str = now.strftime("%Y-%m-%d %H:%M:%S")
-            csv_file = "signtures"
-            self.excel_utility.save_to_csv(
-                self.excel_utility.SIGNATURES_DIR,
-                csv_file,
-                {
-                    "Timestamp": [date_str],
-                    "Signature": [signature],
-                    "Block Time": [block_time if block_time else "N/A"],
-                },
-            )
 
         except Exception as e:
             logger.error(f"❌ Error processing WebSocket message: {e}", exc_info=True)

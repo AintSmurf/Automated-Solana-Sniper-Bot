@@ -9,16 +9,14 @@ logger = LoggingHandler.get_logger()
 class ExcelUtility:
     def __init__(self):
         self.base_dir = os.path.abspath("results")
-
-        self.SIGNATURES_DIR = os.path.join(self.base_dir, "signatures")
-        self.TRANSACTIONS_DIR = os.path.join(self.base_dir, "transactions")
+        self.bought_tokens_dir = os.path.abspath("tokens_to_track")
         self.TOKENS_DIR = os.path.join(self.base_dir, "tokens")
+        self.BOUGHT_TOKENS = os.path.join(self.bought_tokens_dir, "bought_tokens")
 
         self.create_folders()
 
     def create_folders(self):
-        os.makedirs(self.SIGNATURES_DIR, exist_ok=True)
-        os.makedirs(self.TRANSACTIONS_DIR, exist_ok=True)
+        os.makedirs(self.BOUGHT_TOKENS, exist_ok=True)
         os.makedirs(self.TOKENS_DIR, exist_ok=True)
         logger.info("✅ Successfully created folders ..")
 
