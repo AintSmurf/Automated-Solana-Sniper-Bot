@@ -21,7 +21,7 @@ import math
 from utilities.rug_check_utility import RugCheckUtility
 import requests
 from datetime import datetime
-
+import re
 
 # Set up logger
 logger = LoggingHandler.get_logger()
@@ -549,21 +549,21 @@ class SolanaHandler:
             asset_data = response_json["result"]
             token_info = asset_data.get("token_info", {})
 
-            ##  Check Mint Authority (Prevents Rug Pulls)
-            # mint_authority = token_info.get("mint_authority", None)
-            # if mint_authority not in [None, ""]:
-            #     logger.warning(
-            #         f"🚨 Token {token_mint} still has mint authority ({mint_authority})! HIGH RISK."
-            #     )
-            #     return False
+            #  Check Mint Authority (Prevents Rug Pulls)
+            mint_authority = token_info.get("mint_authority", None)
+            if mint_authority not in [None, ""]:
+                logger.warning(
+                    f"🚨 Token {token_mint} still has mint authority ({mint_authority})! HIGH RISK."
+                )
+                return False
 
-            # ## Check Freeze Authority (Prevents Wallet Freezing)
-            # freeze_authority = token_info.get("freeze_authority", None)
-            # if freeze_authority:
-            #     logger.warning(
-            #         f"🚨 Token {token_mint} has freeze authority ({freeze_authority})! Devs can freeze funds. HIGH RISK."
-            #     )
-            #     return False
+            ## Check Freeze Authority (Prevents Wallet Freezing)
+            freeze_authority = token_info.get("freeze_authority", None)
+            if freeze_authority:
+                logger.warning(
+                    f"🚨 Token {token_mint} has freeze authority ({freeze_authority})! Devs can freeze funds. HIGH RISK."
+                )
+                return False
 
             ##  Check Burn Status
             if asset_data.get("burnt", False):
@@ -591,6 +591,7 @@ class SolanaHandler:
             logger.error(f"❌ Error fetching contract code from Helius: {e}")
             return False
 
+    # paid version of liquidty and accurate
     def get_liqudity(self, new_token_mint: str) -> float:
         try:
             url = f"https://public-api.birdeye.so/defi/price?include_liquidity=true&address={new_token_mint}"
@@ -609,6 +610,97 @@ class SolanaHandler:
             logger.error(f"failed to retrive liquidity: {e}")
 
         return None
+
+    # free version of liquidity and estmiated
+    def parse_liquidity_logs(self, logs: list[str], token_mint: str) -> dict:
+        result = {
+            "itsa": None,
+            "yta": None,
+            "itsa_decimals": 6,  # Default USDC
+            "yta_decimals": 9,  # Default memecoin
+            "source": None,
+        }
+
+        for log in logs:
+            logger.debug(f"🔍 Log line: {log}")
+
+            # --- Strategy-based pattern ---
+            if result["itsa"] is None:
+                itsa_match = re.search(r"itsa[:=]?\s*([0-9]+)", log)
+                if itsa_match:
+                    result["itsa"] = int(itsa_match.group(1))
+                    result["source"] = "strategy"
+
+            if result["yta"] is None:
+                yta_match = re.search(r"yta[:=]?\s*([0-9]+)", log)
+                if yta_match:
+                    result["yta"] = int(yta_match.group(1))
+                    result["source"] = "strategy"
+
+            # --- Raydium-based pattern (only if "initialize2" exists) ---
+            if "initialize2: InitializeInstruction2" in log:
+                logger.debug(f"🔍 Raw initialize2 log: {log}")
+
+                pc_match = re.search(r"init_pc_amount:\s*([0-9]+)", log)
+                coin_match = re.search(r"init_coin_amount:\s*([0-9]+)", log)
+
+                logger.debug(
+                    f"💡 init_pc_amount: {pc_match.group(1) if pc_match else 'None'}"
+                )
+                logger.debug(
+                    f"💡 init_coin_amount: {coin_match.group(1) if coin_match else 'None'}"
+                )
+
+                if pc_match:
+                    result["itsa"] = int(pc_match.group(1))
+                    result["itsa_decimals"] = 9  # SOL decimals
+                    result["source"] = "raydium"
+
+                if coin_match:
+                    result["yta"] = int(coin_match.group(1))
+                    result["source"] = "raydium"
+
+        # --- Post-processing if both sides found ---
+        if result["itsa"] is not None and result["yta"] is not None:
+            try:
+                result["yta_decimals"] = self.get_token_decimals(token_mint)
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to fetch decimals for {token_mint}: {e}")
+                result["yta_decimals"] = 9
+
+            itsa_usd = result["itsa"] / (10 ** result["itsa_decimals"])
+
+            if result["source"] == "raydium":
+                try:
+                    sol_price = self.get_sol_price()
+                    itsa_usd *= sol_price
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to fetch SOL price: {e}")
+                    itsa_usd = 0
+
+            yta_tokens = result["yta"] / (10 ** result["yta_decimals"])
+
+            result["liquidity_usd"] = itsa_usd
+            result["token_amount"] = yta_tokens
+            result["launch_price_usd"] = (
+                round(itsa_usd / yta_tokens, 8) if yta_tokens > 0 else 0
+            )
+
+        return result
+
+    # helper free version of liquidity and estmiated
+    def analyze_liquidty(self, logs: list[str], token_mint: str):
+        liquidity_data = self.parse_liquidity_logs(logs, token_mint)
+
+        if liquidity_data.get("liquidity_usd", 0) > 0:
+            liquidity = liquidity_data["liquidity_usd"]
+            launch_price = liquidity_data["launch_price_usd"]
+            logger.info(
+                f"💧 Liquidity detected for {token_mint} - ${liquidity:.2f}, Launch price: ${launch_price:.8f}"
+            )
+            return liquidity
+        else:
+            logger.info("ℹ️ No liquidity info found in logs.")
 
     def get_largest_accounts(self, token_mint: str):
         """Fetch largest token holders and analyze risk."""
@@ -656,10 +748,10 @@ class SolanaHandler:
                 for holder in top_holders
             ]
 
-            # # Check if the top holder has over 5%
-            # if top_holder_percentages[0] > 5:
-            #     special_logger.debug("top holder has more than 5%")
-            #     return False
+            # Check if the top holder has over 5%
+            if top_holder_percentages[0] > 5:
+                special_logger.debug("top holder has more than 5%")
+                return False
 
             # Check for Identical Holders from Position 2-10
             if len(top_holder_percentages) > 1:

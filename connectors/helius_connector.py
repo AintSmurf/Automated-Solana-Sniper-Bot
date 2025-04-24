@@ -23,7 +23,6 @@ signature_cache = deque(maxlen=5000)
 
 latest_block_time = int(time.time())
 known_tokens = set()
-OPENBOOK_PROGRAM_ID = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
 
 
 class HeliusConnector:
@@ -63,8 +62,6 @@ class HeliusConnector:
             tx_data = self.requests_utility.post(
                 endpoint=self.api_key["API_KEY"], payload=self.transaction_payload
             )
-            logger.debug(f"transaction test:{tx_data}")
-
             post_token_balances = (
                 tx_data.get("result", {}).get("meta", {}).get("postTokenBalances", [])
             )
@@ -75,6 +72,7 @@ class HeliusConnector:
             token_owner = (
                 post_token_balances[0]["owner"] if post_token_balances else "N/A"
             )
+            logs = tx_data.get("result", {}).get("meta", {}).get("logMessages", [])
 
             logger.debug(f"transaction response:{tx_data}")
             if not token_mint:
@@ -98,15 +96,14 @@ class HeliusConnector:
             if token_mint == "So11111111111111111111111111111111111111112":
                 logger.info("⏩ Ignoring transaction: This is a SOL transaction.")
                 return
-            # liquidity = self.solana_manager.get_liqudity(token_mint)
-            liquidity = 0
+            # check liquidity
+            liquidity = self.solana_manager.analyze_liquidty(logs, token_mint)
             market_cap = "N/A"
 
             now = datetime.now()
             date_str = now.strftime("%Y-%m-%d")
             time_str = now.strftime("%H:%M:%S")
             filename = f"safe_tokens_{date_str}.csv"
-
             # save all tokens
             self.excel_utility.save_to_csv(
                 self.excel_utility.TOKENS_DIR,
@@ -115,6 +112,7 @@ class HeliusConnector:
                     "Timestamp": [f"{date_str} {time_str}"],
                     "Signature": [signature],
                     "Token Mint": [token_mint],
+                    "Liquidity (Estimated)": [liquidity],
                 },
             )
 
@@ -207,7 +205,7 @@ class HeliusConnector:
             error = value.get("err", None)
             block_time = value.get("blockTime", None)
 
-            logger.debug(f"transaction response:{data}")
+            logger.debug(f"weboscket response:{data}")
 
             # Analyze error (if exists)
             if error is not None:
