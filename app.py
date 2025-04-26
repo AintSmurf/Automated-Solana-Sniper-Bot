@@ -3,9 +3,10 @@ from discord_bot.bot import Discord_Bot
 from connectors.helius_connector import HeliusConnector
 from helpers.logging_manager import LoggingHandler
 from helpers.solana_manager import SolanaHandler
-from utilities.rug_check_utility import RugCheckUtility
 import threading
 import time
+from helpers.open_positions import OpenPositionTracker
+from helpers.open_positions import OpenPositionTracker
 
 # set up logger
 logger = LoggingHandler.get_logger()
@@ -18,6 +19,7 @@ def start_discord_bot():
 
 def main():
     helius_connector = HeliusConnector()
+    tracker = OpenPositionTracker(1.2, 0.95)
 
     ws_thread = threading.Thread(target=helius_connector.start_ws, daemon=True)
     ws_thread.start()
@@ -29,6 +31,10 @@ def main():
     fetcher_thread.start()
     logger.info("✅ Transaction fetcher started")
 
+    trakcer_thread = threading.Thread(target=tracker.track_positions, daemon=True)
+    trakcer_thread.start()
+    logger.info("✅ Position tracker started")
+
     discord_thread = threading.Thread(target=start_discord_bot, daemon=True)
     discord_thread.start()
     logger.info("✅ Discord bot (with Excel watcher) started in a separate thread")
@@ -37,5 +43,20 @@ def main():
         time.sleep(1)
 
 
+def test():
+    sl = SolanaHandler()
+    tracker = OpenPositionTracker()
+    ls = [
+        "BQX1cjcRHXmrqNtoFWwmE5bZj7RPneTmqXB979b2pump",
+        "9fyGRD9vX7W7CcHHS22zH2bBRzBoAAPKc93PMzxybonk",
+        "So11111111111111111111111111111111111111112",
+    ]
+    result = sl.get_token_price("BQX1cjcRHXmrqNtoFWwmE5bZj7RPneTmqXB979b2pump")
+    import pprint
+
+    print(result)
+
+
 if __name__ == "__main__":
-    main()
+    # main()
+    test()

@@ -12,7 +12,6 @@ class ExcelUtility:
         self.bought_tokens_dir = os.path.abspath("tokens_to_track")
         self.TOKENS_DIR = os.path.join(self.base_dir, "tokens")
         self.BOUGHT_TOKENS = os.path.join(self.bought_tokens_dir, "bought_tokens")
-
         self.create_folders()
 
     def create_folders(self):

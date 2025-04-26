@@ -45,7 +45,7 @@ class RugCheckUtility:
 
         if top_holders:
             biggest_holder_pct = top_holders[0].get("pct", 0)
-            if biggest_holder_pct > 5:
+            if biggest_holder_pct > 30:
                 logger.warning(
                     f"🚨 TOP HOLDER OWNS {biggest_holder_pct:.2f}% - High risk of manipulation!"
                 )

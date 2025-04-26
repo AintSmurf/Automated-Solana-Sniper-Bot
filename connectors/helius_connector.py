@@ -11,6 +11,7 @@ from helpers.framework_manager import get_payload
 from config.urls import HELIUS_URL
 from config.web_socket import HELIUS
 from collections import deque
+from utilities.rug_check_utility import RugCheckUtility
 
 
 # set up logger
@@ -29,6 +30,7 @@ class HeliusConnector:
     def __init__(self, devnet=False, API=None):
         logger.info("Initializing Helius WebSocket connection...")
         credentials_utility = CredentialsUtility()
+        self.rug_utility = RugCheckUtility()
         self.excel_utility = ExcelUtility()
         self.solana_manager = SolanaHandler()
         self.requests_utility = RequestsUtility(HELIUS_URL["BASE_URL"])
@@ -99,22 +101,22 @@ class HeliusConnector:
             # check liquidity
             liquidity = self.solana_manager.analyze_liquidty(logs, token_mint)
             market_cap = "N/A"
-
-            now = datetime.now()
-            date_str = now.strftime("%Y-%m-%d")
-            time_str = now.strftime("%H:%M:%S")
-            filename = f"safe_tokens_{date_str}.csv"
-            # save all tokens
-            self.excel_utility.save_to_csv(
-                self.excel_utility.TOKENS_DIR,
-                "all_tokens_found.csv",
-                {
-                    "Timestamp": [f"{date_str} {time_str}"],
-                    "Signature": [signature],
-                    "Token Mint": [token_mint],
-                    "Liquidity (Estimated)": [liquidity],
-                },
-            )
+            if liquidity > 5000 and self.rug_utility.is_liquidity_unlocked(token_mint):
+                now = datetime.now()
+                date_str = now.strftime("%Y-%m-%d")
+                time_str = now.strftime("%H:%M:%S")
+                filename = f"safe_tokens_{date_str}.csv"
+                # save all tokens
+                self.excel_utility.save_to_csv(
+                    self.excel_utility.TOKENS_DIR,
+                    "all_tokens_found.csv",
+                    {
+                        "Timestamp": [f"{date_str} {time_str}"],
+                        "Signature": [signature],
+                        "Token Mint": [token_mint],
+                        "Liquidity (Estimated)": [liquidity],
+                    },
+                )
 
             if self.solana_manager.check_scam_functions_helius(
                 token_mint

@@ -32,7 +32,7 @@ class SolanaHandler:
     def __init__(self):
         self.helius_requests = RequestsUtility(HELIUS_URL["BASE_URL"])
         credentials_utility = CredentialsUtility()
-        self.raydium_requests = RequestsUtility(RAYDIUM["BASE_URL"])
+        self.request_utility = RequestsUtility(RAYDIUM["BASE_URL"])
         self.jupiter_requests = RequestsUtility(JUPITER_STATION["BASE_URL"])
         self.rug_check_utility = RugCheckUtility()
         self.excel_utility = ExcelUtility()
@@ -169,24 +169,6 @@ class SolanaHandler:
             quote = self.get_quote(input_mint, output_mint, token_amount)
             price_per_token = usd_amount / float(quote["outAmount"])
             print("token prince: ", price_per_token)
-            # adjust key if needed
-            now = datetime.now()
-            date_str = now.strftime("%Y-%m-%d")
-            time_str = now.strftime("%H:%M:%S")
-            filename = f"bought_tokens_{date_str}.csv"
-            # save all tokens
-            self.excel_utility.save_to_csv(
-                self.excel_utility.BOUGHT_TOKENS,
-                filename,
-                {
-                    "Timestamp": [f"{date_str} {time_str}"],
-                    "Token_sold": [input_mint],
-                    "Token boguht": [output_mint],
-                    "amount": [token_amount],
-                    "USD": [usd_amount],
-                    "type": "BUY",
-                },
-            )
             txn_64 = self.get_swap_transaction(quote)
             self.send_transaction_payload["params"][0] = txn_64
             self.send_transaction_payload["id"] = self.id
@@ -194,7 +176,28 @@ class SolanaHandler:
             response = self.helius_requests.post(
                 self.api_key["API_KEY"], payload=self.send_transaction_payload
             )
-            logger.info(response)
+            logger.debug(f" buy response {response}")
+            # adjust key if needed
+            now = datetime.now()
+            date_str = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M:%S")
+            filename = f"bought_tokens_{date_str}.csv"
+            token_price = self.get_token_price(output_mint)
+            # save all tokens
+            self.excel_utility.save_to_csv(
+                self.excel_utility.BOUGHT_TOKENS,
+                filename,
+                {
+                    "Timestamp": [f"{date_str} {time_str}"],
+                    "Token_price": [token_price],
+                    "Token_sold": [input_mint],
+                    "Token boguht": [output_mint],
+                    "amount": [token_amount],
+                    "USD": [usd_amount],
+                    "type": "BUY",
+                    "Sold_At_Price": "",
+                },
+            )
             return response["result"]
         except Exception as e:
             logger.error(f"❌ Failed to place buy order: {e}")
@@ -371,9 +374,6 @@ class SolanaHandler:
             logger.error(f"❌ Error getting token decimals: {e}")
             return 6
 
-    def transaction_validtor(self):
-        pass
-
     def get_token_supply(self, mint_address: str) -> float:
         """Fetch total token supply from Solana RPC and scale it correctly."""
         try:
@@ -392,7 +392,7 @@ class SolanaHandler:
         try:
 
             self.liquidity_payload["mint1"] = token_mint
-            response_data = self.raydium_requests.get(
+            response_data = self.request_utility.get(
                 endpoint=RAYDIUM["LIQUIDITY"], payload=self.liquidity_payload
             )
 
@@ -457,25 +457,6 @@ class SolanaHandler:
                 self.api_key["API_KEY"], payload=self.send_transaction_payload
             )
             logger.info(f"✅ Sell order completed: {response}")
-            # adjust key if needed
-            now = datetime.now()
-            date_str = now.strftime("%Y-%m-%d")
-            time_str = now.strftime("%H:%M:%S")
-            filename = f"bought_tokens_{date_str}.csv"
-            # save all tokens
-            self.excel_utility.save_to_csv(
-                self.excel_utility.BOUGHT_TOKENS,
-                filename,
-                {
-                    "Timestamp": [f"{date_str} {time_str}"],
-                    "Token_sold": [input_mint],
-                    "Token boguht": [output_mint],
-                    "amount": [raw_amount],
-                    "USD": [usd_amount],
-                    "type": "SELL",
-                },
-            )
-
         except Exception as e:
             logger.error(f"❌ Failed to place sell order: {e}")
 
@@ -771,3 +752,13 @@ class SolanaHandler:
         except Exception as e:
             logger.error(f"❌ Error fetching largest accounts from Helius: {e}")
         return False
+
+    def get_token_prices(self, mints: list) -> dict:
+        ids = ",".join(mints)
+        endpoint = f"{JUPITER_STATION['PRICE']}?ids={ids}&showExtraInfo=true"
+        return self.jupiter_requests.get(endpoint)
+
+    def get_token_price(self, mint: str) -> float:
+        endpoint = f"{JUPITER_STATION['PRICE']}?ids={mint}&showExtraInfo=true"
+        data = self.jupiter_requests.get(endpoint)
+        return data["data"][mint]["price"]
