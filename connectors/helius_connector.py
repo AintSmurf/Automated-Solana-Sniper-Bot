@@ -12,6 +12,7 @@ from config.urls import HELIUS_URL
 from config.web_socket import HELIUS
 from collections import deque
 from utilities.rug_check_utility import RugCheckUtility
+import threading
 
 
 # set up logger
@@ -20,7 +21,6 @@ logger = LoggingHandler.get_logger()
 # Track processed signatures to avoid duplicates
 signature_queue = deque(maxlen=500)
 signature_cache = deque(maxlen=5000)
-
 
 latest_block_time = int(time.time())
 known_tokens = set()
@@ -99,14 +99,20 @@ class HeliusConnector:
                 logger.info("⏩ Ignoring transaction: This is a SOL transaction.")
                 return
             # check liquidity
+            now = datetime.now()
+            date_str = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M:%S")
             liquidity = self.solana_manager.analyze_liquidty(logs, token_mint)
             market_cap = "N/A"
-            if liquidity > 5000 and self.rug_utility.is_liquidity_unlocked(token_mint):
-                now = datetime.now()
-                date_str = now.strftime("%Y-%m-%d")
-                time_str = now.strftime("%H:%M:%S")
-                filename = f"safe_tokens_{date_str}.csv"
-                # save all tokens
+            if liquidity > 2000:
+                logger.info(
+                    f"🚀 LIQUIDITY passed: ${liquidity:.2f} — considering buy for {token_mint}"
+                )
+                known_tokens.add(token_mint)
+                # Simulated BUY (replace this with real buy() when ready)
+                logger.info(f"🧪 [SIM MODE] Would BUY {token_mint} with $25")
+
+                # Save to all_tokens_found.csv regardless
                 self.excel_utility.save_to_csv(
                     self.excel_utility.TOKENS_DIR,
                     "all_tokens_found.csv",
@@ -118,30 +124,15 @@ class HeliusConnector:
                     },
                 )
 
-            if self.solana_manager.check_scam_functions_helius(
-                token_mint
-            ) and self.solana_manager.get_largest_accounts(token_mint):
-                known_tokens.add(token_mint)
-                self.excel_utility.save_to_csv(
-                    self.excel_utility.TOKENS_DIR,
-                    filename,
-                    {
-                        "Timestamp": [f"{date_str} {time_str}"],
-                        "Signature": [signature],
-                        "Token Mint": [token_mint],
-                        "Token Owner": [token_owner],
-                        "Liquidity (Estimated)": [liquidity],
-                        "Market Cap": [market_cap],
-                        "SentToDiscord": False,
-                    },
-                )
-                logger.info(
-                    f"✅ New Token Data Saved: {token_mint} (Signature: {signature}) - passed tests"
-                )
+                # ✅ Launch post-buy safety check thread
+                threading.Thread(
+                    target=self.solana_manager.post_buy_safety_check,
+                    args=(token_mint, token_owner, signature, liquidity, market_cap),
+                    daemon=True,
+                ).start()
 
             else:
-                logger.info("failed in one of the test functions ...")
-                return
+                logger.info("⛔ Liquidity too low — skipping.")
 
         except Exception as e:
             logger.error(f"❌ Error fetching transaction data: {e}")

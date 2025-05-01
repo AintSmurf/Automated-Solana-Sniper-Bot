@@ -22,6 +22,7 @@ from utilities.rug_check_utility import RugCheckUtility
 import requests
 from datetime import datetime
 import re
+import time
 
 # Set up logger
 logger = LoggingHandler.get_logger()
@@ -45,6 +46,7 @@ class SolanaHandler:
         self.program_accounts = get_payload("Liquidity_payload")
         self.api_key = credentials_utility.get_helius_api_key()
         self._private_key_solana = credentials_utility.get_solana_private_wallet_key()
+        self.bird_eye = credentials_utility.get_bird_eye_key()
         self.url = HELIUS_URL["BASE_URL"] + self.api_key["API_KEY"]
         self.client = Client(self.url, timeout=30)
         self.keypair = Keypair.from_base58_string(
@@ -580,7 +582,7 @@ class SolanaHandler:
             headers = {
                 "accept": "application/json",
                 "x-chain": "solana",
-                "X-API-KEY": "01876fc6d5944c7e80b57b0b929c1a4c",
+                "X-API-KEY": self.bird_eye["BIRD_EYE"],
             }
             response = requests.get(url, headers=headers)
             logger.info(response.json())
@@ -762,3 +764,62 @@ class SolanaHandler:
         endpoint = f"{JUPITER_STATION['PRICE']}?ids={mint}&showExtraInfo=true"
         data = self.jupiter_requests.get(endpoint)
         return data["data"][mint]["price"]
+
+    def post_buy_safety_check(
+        self, token_mint, token_owner, signature, liquidity, market_cap
+    ):
+        logger.info(f"🔍 Running post-buy safety check for {token_mint}...")
+        time.sleep(10)
+
+        try:
+            is_unlocked = self.rug_check_utility.is_liquidity_unlocked_test(token_mint)
+            is_safe = self.check_scam_functions_helius(token_mint)
+            has_good_holders = self.get_largest_accounts(token_mint)
+
+            if is_unlocked and is_safe and has_good_holders:
+                logger.info(
+                    f"✅ {token_mint} PASSED post-buy safety check. Logging as safe."
+                )
+
+                now = datetime.now()
+                date_str = now.strftime("%Y-%m-%d")
+                time_str = now.strftime("%H:%M:%S")
+                filename = f"safe_tokens_{date_str}.csv"
+
+                self.excel_utility.save_to_csv(
+                    self.excel_utility.TOKENS_DIR,
+                    filename,
+                    {
+                        "Timestamp": [f"{date_str} {time_str}"],
+                        "Signature": [signature],
+                        "Token Mint": [token_mint],
+                        "Token Owner": [token_owner],
+                        "Liquidity (Estimated)": [liquidity],
+                        "Market Cap": [market_cap],
+                        "SentToDiscord": False,
+                    },
+                )
+
+            else:
+                logger.warning(
+                    f"❌ {token_mint} FAILED post-buy safety. Would SELL in live mode."
+                )
+                now = datetime.now()
+                date_str = now.strftime("%Y-%m-%d")
+                time_str = now.strftime("%H:%M:%S")
+
+                self.excel_utility.save_to_csv(
+                    self.excel_utility.TOKENS_DIR,
+                    f"scam_tokens_{date_str}.csv",
+                    {
+                        "Timestamp": [f"{date_str} {time_str}"],
+                        "Signature": [signature],
+                        "Token Mint": [token_mint],
+                        "Token Owner": [token_owner],
+                        "Liquidity (Estimated)": [liquidity],
+                        "Market Cap": [market_cap],
+                    },
+                )
+
+        except Exception as e:
+            logger.error(f"❌ Error during post-buy safety check: {e}")

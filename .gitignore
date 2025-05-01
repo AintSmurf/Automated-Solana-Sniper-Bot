@@ -12,3 +12,4 @@ liquidity_connector.py
 tokens_to_track
 analysis 
 .vscode
+analyze.py

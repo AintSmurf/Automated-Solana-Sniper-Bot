@@ -81,3 +81,20 @@ class RugCheckUtility:
         total_liquidity = token_data.get("totalMarketLiquidity", 0)
 
         return total_liquidity
+
+    def is_liquidity_unlocked_test(self, token_address):
+        logger.info(f"🔍 Checking LP lock status for {token_address} ...")
+        url = self.token_risk + f"/{token_address}/report"
+        token_data = self.requests_utility.get(url)
+
+        # Extract only what we care about
+        markets = token_data.get("markets", [{}])
+        lp_unlocked = markets[0].get("lpUnlocked", 0)
+        lp_locked = markets[0].get("lpLocked", 0)
+
+        if lp_locked == 0:
+            logger.warning("🚨 LP is 100% UNLOCKED - High rug pull risk!")
+            return False
+
+        logger.info("✅ LP is locked! Token is safer to trade.")
+        return True

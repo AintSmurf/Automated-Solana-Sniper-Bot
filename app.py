@@ -7,6 +7,7 @@ import threading
 import time
 from helpers.open_positions import OpenPositionTracker
 from helpers.open_positions import OpenPositionTracker
+from utilities.rug_check_utility import RugCheckUtility
 
 # set up logger
 logger = LoggingHandler.get_logger()
@@ -46,17 +47,11 @@ def main():
 def test():
     sl = SolanaHandler()
     tracker = OpenPositionTracker()
-    ls = [
-        "BQX1cjcRHXmrqNtoFWwmE5bZj7RPneTmqXB979b2pump",
-        "9fyGRD9vX7W7CcHHS22zH2bBRzBoAAPKc93PMzxybonk",
-        "So11111111111111111111111111111111111111112",
-    ]
-    result = sl.get_token_price("BQX1cjcRHXmrqNtoFWwmE5bZj7RPneTmqXB979b2pump")
-    import pprint
+    rug = RugCheckUtility()
 
-    print(result)
+    rug.is_liquidity_unlocked("")
 
 
 if __name__ == "__main__":
-    # main()
-    test()
+    main()
+    # test()
