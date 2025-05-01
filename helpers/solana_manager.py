@@ -46,7 +46,7 @@ class SolanaHandler:
         self.program_accounts = get_payload("Liquidity_payload")
         self.api_key = credentials_utility.get_helius_api_key()
         self._private_key_solana = credentials_utility.get_solana_private_wallet_key()
-        self.bird_eye = credentials_utility.get_bird_eye_key()
+        self.bird_api_key = credentials_utility.get_bird_eye_key()
         self.url = HELIUS_URL["BASE_URL"] + self.api_key["API_KEY"]
         self.client = Client(self.url, timeout=30)
         self.keypair = Keypair.from_base58_string(
@@ -582,7 +582,7 @@ class SolanaHandler:
             headers = {
                 "accept": "application/json",
                 "x-chain": "solana",
-                "X-API-KEY": self.bird_eye["BIRD_EYE"],
+                "X-API-KEY": self.bird_api_key["BIRD_EYE"],
             }
             response = requests.get(url, headers=headers)
             logger.info(response.json())

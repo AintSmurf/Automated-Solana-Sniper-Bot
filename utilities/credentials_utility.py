@@ -27,6 +27,6 @@ class CredentialsUtility:
         return {"DISCORD_TOKEN": self.api_key}
 
     def get_bird_eye_key(self):
-        logger.info("retriving birdye key ...")
+        logger.info("retriving Birdeye key ...")
         self.api_key = os.environ["BIRD_EYE"]
         return {"BIRD_EYE": self.api_key}

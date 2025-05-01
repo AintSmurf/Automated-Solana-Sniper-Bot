@@ -44,14 +44,5 @@ def main():
         time.sleep(1)
 
 
-def test():
-    sl = SolanaHandler()
-    tracker = OpenPositionTracker()
-    rug = RugCheckUtility()
-
-    rug.is_liquidity_unlocked("")
-
-
 if __name__ == "__main__":
     main()
-    # test()
