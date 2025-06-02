@@ -13,3 +13,5 @@ tokens_to_track
 analysis 
 .vscode
 analyze.py
+solana_dex_programs.xlsx
+~$*

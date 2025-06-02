@@ -30,3 +30,8 @@ class CredentialsUtility:
         logger.info("retriving Birdeye key ...")
         self.api_key = os.environ["BIRD_EYE"]
         return {"BIRD_EYE": self.api_key}
+    def get_dex(self):
+        logger.info("retriving DEX Name ...")
+        self.api_key = os.environ["DEX"]
+        return {"DEX": self.api_key}
+

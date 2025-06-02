@@ -20,7 +20,7 @@ def start_discord_bot():
 
 def main():
     helius_connector = HeliusConnector()
-    tracker = OpenPositionTracker(1.2, 0.95)
+    tracker = OpenPositionTracker(1.5, 0.95)
 
     ws_thread = threading.Thread(target=helius_connector.start_ws, daemon=True)
     ws_thread.start()

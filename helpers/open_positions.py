@@ -93,3 +93,20 @@ class OpenPositionTracker:
             df.to_csv(self.file_path, index=False)
         except Exception as e:
             logger.error(f"❌ Error selling token: {e}")
+        try:
+            pnl = ((sell_price - df.at[idx, "Token_price"]) / df.at[idx, "Token_price"]) * 100
+
+            self.excel_utility.save_to_csv(
+                self.excel_utility.TOKENS_DIR,
+                "closed_positions.csv",
+                {
+                    "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                    "Token Mint": [token_mint],
+                    "Entry": [df.at[idx, "Token_price"]],
+                    "Exit": [sell_price],
+                    "PnL (%)": [round(pnl, 2)],
+                },
+            )
+        except Exception as e:
+            logger.error(f"❌ Error saving pnl token: {e}")
+

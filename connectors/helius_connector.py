@@ -35,6 +35,7 @@ class HeliusConnector:
         self.solana_manager = SolanaHandler()
         self.requests_utility = RequestsUtility(HELIUS_URL["BASE_URL"])
         self.api_key = credentials_utility.get_helius_api_key()
+        self.dex_name = credentials_utility.get_dex()["DEX"]
         self.latest_block_time = int(time.time())
         if devnet:
             self.wss_url = HELIUS["LOGS_SOCKET_DEVNET"] + self.api_key["API_KEY"]
@@ -46,7 +47,7 @@ class HeliusConnector:
         self.id = 1
 
     def prepare_files(self) -> None:
-        self.raydium_payload = get_payload("Raydium")
+        self.raydium_payload = get_payload(self.dex_name)
         self.transaction_payload = get_payload("Transaction")
         self.transaction_simulation_payload = get_payload("Transaction_Simulation")
         self.token_address_payload = get_payload("Token_adress_payload")
