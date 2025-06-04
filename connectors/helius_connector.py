@@ -49,7 +49,7 @@ class HeliusConnector:
     def prepare_files(self) -> None:
         self.raydium_payload = get_payload(self.dex_name)
         self.transaction_payload = get_payload("Transaction")
-        self.transaction_simulation_payload = get_payload("Transaction_Simulation")
+        self.transaction_simulation_payload = get_payload("Transaction_simulation")
         self.token_address_payload = get_payload("Token_adress_payload")
         self.lastest_slot_paylaod = get_payload("Slot_payload")
 

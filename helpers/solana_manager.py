@@ -764,62 +764,71 @@ class SolanaHandler:
         endpoint = f"{JUPITER_STATION['PRICE']}?ids={mint}&showExtraInfo=true"
         data = self.jupiter_requests.get(endpoint)
         return data["data"][mint]["price"]
-
-    def post_buy_safety_check(
-        self, token_mint, token_owner, signature, liquidity, market_cap
-    ):
+    def post_buy_safety_check(self, token_mint, token_owner, signature, liquidity, market_cap):
         logger.info(f"🔍 Running post-buy safety check for {token_mint}...")
         time.sleep(10)
 
         try:
+            # Run checks individually
             is_unlocked = self.rug_check_utility.is_liquidity_unlocked_test(token_mint)
+            if not is_unlocked:
+                reason = "liquidity_locked"
+                logger.warning(f"❌ {token_mint} failed: {reason}")
+                self.log_failed_token(token_mint, token_owner, signature, liquidity, market_cap, reason)
+                return
+
             is_safe = self.check_scam_functions_helius(token_mint)
+            if not is_safe:
+                reason = "scam_functions_detected"
+                logger.warning(f"❌ {token_mint} failed: {reason}")
+                self.log_failed_token(token_mint, token_owner, signature, liquidity, market_cap, reason)
+                return
+
             has_good_holders = self.get_largest_accounts(token_mint)
+            if not has_good_holders:
+                reason = "bad_holder_distribution"
+                logger.warning(f"❌ {token_mint} failed: {reason}")
+                self.log_failed_token(token_mint, token_owner, signature, liquidity, market_cap, reason)
+                return
 
-            if is_unlocked and is_safe and has_good_holders:
-                logger.info(
-                    f"✅ {token_mint} PASSED post-buy safety check. Logging as safe."
-                )
+            # If all passed
+            logger.info(f"✅ {token_mint} PASSED post-buy safety check. Logging as safe.")
+            now = datetime.now()
+            date_str = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M:%S")
 
-                now = datetime.now()
-                date_str = now.strftime("%Y-%m-%d")
-                time_str = now.strftime("%H:%M:%S")
-                filename = f"safe_tokens_{date_str}.csv"
-
-                self.excel_utility.save_to_csv(
-                    self.excel_utility.TOKENS_DIR,
-                    filename,
-                    {
-                        "Timestamp": [f"{date_str} {time_str}"],
-                        "Signature": [signature],
-                        "Token Mint": [token_mint],
-                        "Token Owner": [token_owner],
-                        "Liquidity (Estimated)": [liquidity],
-                        "Market Cap": [market_cap],
-                        "SentToDiscord": False,
-                    },
-                )
-
-            else:
-                logger.warning(
-                    f"❌ {token_mint} FAILED post-buy safety. Would SELL in live mode."
-                )
-                now = datetime.now()
-                date_str = now.strftime("%Y-%m-%d")
-                time_str = now.strftime("%H:%M:%S")
-
-                self.excel_utility.save_to_csv(
-                    self.excel_utility.TOKENS_DIR,
-                    f"scam_tokens_{date_str}.csv",
-                    {
-                        "Timestamp": [f"{date_str} {time_str}"],
-                        "Signature": [signature],
-                        "Token Mint": [token_mint],
-                        "Token Owner": [token_owner],
-                        "Liquidity (Estimated)": [liquidity],
-                        "Market Cap": [market_cap],
-                    },
-                )
+            self.excel_utility.save_to_csv(
+                self.excel_utility.TOKENS_DIR,
+                f"safe_tokens_{date_str}.csv",
+                {
+                    "Timestamp": [f"{date_str} {time_str}"],
+                    "Signature": [signature],
+                    "Token Mint": [token_mint],
+                    "Token Owner": [token_owner],
+                    "Liquidity (Estimated)": [liquidity],
+                    "Market Cap": [market_cap],
+                    "SentToDiscord": False,
+                },
+            )
 
         except Exception as e:
             logger.error(f"❌ Error during post-buy safety check: {e}")
+
+    def log_failed_token(self, token_mint, token_owner, signature, liquidity, market_cap, reason):
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H:%M:%S")
+
+        self.excel_utility.save_to_csv(
+            self.excel_utility.TOKENS_DIR,
+            f"scam_tokens_{date_str}.csv",
+            {
+                "Timestamp": [f"{date_str} {time_str}"],
+                "Signature": [signature],
+                "Token Mint": [token_mint],
+                "Token Owner": [token_owner],
+                "Liquidity (Estimated)": [liquidity],
+                "Market Cap": [market_cap],
+                "Fail Reason": [reason],
+            },
+        )
