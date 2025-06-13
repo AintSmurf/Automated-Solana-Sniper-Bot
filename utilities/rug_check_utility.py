@@ -87,14 +87,21 @@ class RugCheckUtility:
         url = self.token_risk + f"/{token_address}/report"
         token_data = self.requests_utility.get(url)
 
-        # Extract only what we care about
         markets = token_data.get("markets", [{}])
         lp_unlocked = markets[0].get("lpUnlocked", 0)
         lp_locked = markets[0].get("lpLocked", 0)
+        total_lp = lp_locked + lp_unlocked
+        logger.debug(f"Token: {token_address}, LP Locked: {lp_locked}, LP Unlocked: {lp_unlocked}")
 
-        if lp_locked == 0:
-            logger.warning("🚨 LP is 100% UNLOCKED - High rug pull risk!")
+        if total_lp == 0:
+            logger.warning("❌ No LP info available — failing.")
             return False
 
-        logger.info("✅ LP is locked! Token is safer to trade.")
+        locked_ratio = lp_locked / total_lp
+        if locked_ratio < 0.3:
+            logger.warning(f"⚠️ Only {locked_ratio*100:.1f}% LP locked — high risk, but allowed.")
+            return True  # We still allow it for now
+
+        logger.info("✅ LP lock ratio acceptable. Token is safer.")
         return True
+

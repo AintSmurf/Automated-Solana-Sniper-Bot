@@ -17,3 +17,6 @@ JUPITER_STATION = {
     "PRICE": "/price/v2",
 }
 RAYDIUM = {"BASE_URL": "https://api-v3.raydium.io", "LIQUIDITY": "/pools/info/mint"}
+SOLSCAN={
+    "SOL_SCAN_URL":"https://public-api.solscan.io/"
+}

@@ -7,11 +7,17 @@ try:
     import coloredlogs
 except ImportError:
     coloredlogs = None
+import time
+import shutil
+import glob
+
+
 
 
 class LoggingHandler:
     _logger = None
     log_lock = threading.Lock()
+    backup_thread_started = False
 
     @staticmethod
     def _setup_logger():
@@ -99,6 +105,12 @@ class LoggingHandler:
                     )
                 )
 
+        if not LoggingHandler.backup_thread_started:
+                LoggingHandler.backup_thread_started = True
+                threading.Thread(
+                    target=LoggingHandler._background_log_backup_runner,
+                    daemon=True
+                ).start()
         return logger
 
     @staticmethod
@@ -135,3 +147,81 @@ class LoggingHandler:
             special_logger.addHandler(file_handler)
 
         return special_logger
+    @staticmethod
+    def get_token_logger(token_mint: str):
+        """Returns a per-token logger for post-buy audit."""
+        logger_name = f"token_logger_{token_mint}"
+        token_logger = logging.getLogger(logger_name)
+        token_logger.setLevel(logging.DEBUG)
+
+        if not token_logger.handlers:
+            token_log_file = os.path.join("logs", "tokens", f"{token_mint}.log")
+            os.makedirs(os.path.dirname(token_log_file), exist_ok=True)
+
+            file_handler = RotatingFileHandler(
+                token_log_file, maxBytes=25_000_000, backupCount=2, encoding="utf-8"
+            )
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s - %(levelname)s - %(message)s"
+                )
+            )
+            token_logger.addHandler(file_handler)
+
+        return token_logger
+    @staticmethod
+    def _background_log_backup_runner():
+        """Background thread to periodically move old logs to backups."""
+        while True:
+            try:
+                # 📦 Backup info logs
+                LoggingHandler._backup_old_logs(
+                    os.path.join("logs", "info.log"),
+                    os.path.join("logs", "backups", "info"),
+                    prefix="info_"
+                )
+                # 📦 Backup debug logs
+                LoggingHandler._backup_old_logs(
+                    os.path.join("logs", "debug", "debug.log"),
+                    os.path.join("logs", "backups", "debug"),
+                    prefix="debug_"
+                )
+                # 📦 Backup console logs
+                LoggingHandler._backup_old_logs(
+                    os.path.join("logs", "console_logs", "console.info"),
+                    os.path.join("logs", "backups", "console"),
+                    prefix="console_"
+                )
+            except Exception as e:
+                print(f"[LogBackupThread] Error during backup: {e}")
+            time.sleep(6000)  # 🔄 Repeat every 10 minutes
+
+    @staticmethod
+    def _backup_old_logs(log_base_path: str, backup_dir: str, prefix: str = "", keep_recent: int = 5):
+        """
+        Backup older rotated logs (e.g., info.log.6+) and move them to a backup folder.
+        Keeps only the most recent `keep_recent` logs in-place.
+        """
+        os.makedirs(backup_dir, exist_ok=True)
+
+        rotated_logs = sorted(
+            glob.glob(f"{log_base_path}.*"),
+            key=lambda f: int(f.split('.')[-1]) if f.split('.')[-1].isdigit() else -1
+        )
+
+        # ❌ Not enough logs to trigger backup
+        if len(rotated_logs) <= keep_recent:
+            return
+
+        # 🎯 Move older ones only (e.g., keep .1 to .5, move .6+)
+        logs_to_backup = rotated_logs[:-keep_recent]
+
+        for log_path in logs_to_backup:
+            filename = os.path.basename(log_path)
+            dest_path = os.path.join(backup_dir, prefix + filename)
+            try:
+                shutil.move(log_path, dest_path)
+            except Exception as e:
+                print(f"⚠️ Failed to backup {log_path}: {e}")
+

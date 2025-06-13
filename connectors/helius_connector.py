@@ -105,7 +105,7 @@ class HeliusConnector:
             time_str = now.strftime("%H:%M:%S")
             liquidity = self.solana_manager.analyze_liquidty(logs, token_mint)
             market_cap = "N/A"
-            if liquidity > 2000:
+            if liquidity > 1500:
                 logger.info(
                     f"🚀 LIQUIDITY passed: ${liquidity:.2f} — considering buy for {token_mint}"
                 )
