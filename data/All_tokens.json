@@ -1,0 +1,15 @@
+{
+    "jsonrpc": "2.0",
+    "id": "ID_PLACE_HOLDER",
+    "method": "logsSubscribe",
+    "params": [
+        {
+            "mentions": [
+                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            ]
+        },
+        {
+            "commitment": "finalized"
+        }
+    ]
+}
