@@ -219,7 +219,9 @@ class LoggingHandler:
 
         for log_path in logs_to_backup:
             filename = os.path.basename(log_path)
-            dest_path = os.path.join(backup_dir, prefix + filename)
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            dest_filename = f"{prefix}{timestamp}_{filename}"
+            dest_path = os.path.join(backup_dir, dest_filename)
             try:
                 shutil.move(log_path, dest_path)
             except Exception as e:

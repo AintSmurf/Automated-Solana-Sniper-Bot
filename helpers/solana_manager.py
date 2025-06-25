@@ -767,7 +767,7 @@ class SolanaHandler:
     
     def post_buy_safety_check(self, token_mint, token_owner, signature, liquidity, market_cap):
         logger.info(f"🔍 Running post-buy safety check for {token_mint}...")
-        reason = "unknown"  # default fallback
+        final_reason = "unknown"
 
         for attempt in range(4):  # 1 initial + 3 retries
             if attempt > 0:
@@ -775,51 +775,64 @@ class SolanaHandler:
                 time.sleep(10)
 
             try:
-                is_unlocked = self.rug_check_utility.is_liquidity_unlocked_test(token_mint)
-                if not is_unlocked:
-                    reason = "liquidity_locked"
-                    logger.warning(f"❌ {token_mint} failed: {reason}")
-                    continue
+                score = 0  # 🧮 reset per attempt
 
-                is_safe = self.check_scam_functions_helius(token_mint)
-                if not is_safe:
-                    reason = "scam_functions_detected"
-                    logger.warning(f"❌ {token_mint} failed: {reason}")
-                    continue
+                # 1️⃣ LP Unlock Status
+                lp_status = self.rug_check_utility.is_liquidity_unlocked_test(token_mint)
+                if lp_status == "safe":
+                    score += 1
+                elif lp_status == "risky":
+                    score += 0.5
+                elif lp_status == "unknown":
+                    score += 0.25
 
-                has_good_holders = self.get_largest_accounts(token_mint)
-                if not has_good_holders:
-                    reason = "bad_holder_distribution"
-                    logger.warning(f"❌ {token_mint} failed: {reason}")
+                # 2️⃣ Scam Code Check
+                if not self.check_scam_functions_helius(token_mint):
+                    final_reason = "scam_functions_detected"
+                    logger.warning(f"❌ {token_mint} failed: {final_reason}")
                     continue
+                score += 1
 
-                # Passed all checks
-                logger.info(f"✅ {token_mint} PASSED post-buy safety check. Logging as safe.")
-                now = datetime.now()
-                date_str = now.strftime("%Y-%m-%d")
-                time_str = now.strftime("%H:%M:%S")
-                self.excel_utility.save_to_csv(
-                    self.excel_utility.TOKENS_DIR,
-                    f"safe_tokens_{date_str}.csv",
-                    {
-                        "Timestamp": [f"{date_str} {time_str}"],
-                        "Signature": [signature],
-                        "Token Mint": [token_mint],
-                        "Token Owner": [token_owner],
-                        "Liquidity (Estimated)": [liquidity],
-                        "Market Cap": [market_cap],
-                        "SentToDiscord": False,
-                    },
-                )
-                return  # success — exit loop
+                # 3️⃣ Holder Distribution
+                if not self.get_largest_accounts(token_mint):
+                    final_reason = "bad_holder_distribution"
+                    logger.warning(f"❌ {token_mint} failed: {final_reason}")
+                    continue
+                score += 1
+
+                logger.info(f"📊 Final score for {token_mint}: {score}/3")
+
+                if score >= 2.5:
+                    logger.info(f"✅ {token_mint} PASSED post-buy safety check. Logging as safe.")
+                    now = datetime.now()
+                    date_str = now.strftime("%Y-%m-%d")
+                    time_str = now.strftime("%H:%M:%S")
+                    self.excel_utility.save_to_csv(
+                        self.excel_utility.TOKENS_DIR,
+                        f"safe_tokens_{date_str}.csv",
+                        {
+                            "Timestamp": [f"{date_str} {time_str}"],
+                            "Signature": [signature],
+                            "Token Mint": [token_mint],
+                            "Token Owner": [token_owner],
+                            "Liquidity (Estimated)": [liquidity],
+                            "Market Cap": [market_cap],
+                            "Score": [score],
+                            "SentToDiscord": False,
+                        },
+                    )
+                    return  # ✅ Exit on success
+
+                final_reason = f"low_score_{score}"
 
             except Exception as e:
+                final_reason = f"exception_attempt_{attempt + 1}"
                 logger.error(f"⚠️ Error during check (attempt {attempt + 1}): {e}")
-                reason = f"exception_attempt_{attempt + 1}"
 
-        # All attempts failed
-        logger.warning(f"❌ {token_mint} FAILED all safety check attempts.")
-        self.log_failed_token(token_mint, token_owner, signature, liquidity, market_cap, reason)
+        # ❌ All attempts failed or score too low
+        logger.warning(f"❌ {token_mint} FAILED post-buy safety check after 4 attempts.")
+        self.log_failed_token(token_mint, token_owner, signature, liquidity, market_cap, final_reason)
+
 
     def log_failed_token(self, token_mint, token_owner, signature, liquidity, market_cap, reason):
         now = datetime.now()

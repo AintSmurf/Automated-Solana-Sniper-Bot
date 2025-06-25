@@ -85,23 +85,32 @@ class RugCheckUtility:
     def is_liquidity_unlocked_test(self, token_address):
         logger.info(f"🔍 Checking LP lock status for {token_address} ...")
         url = self.token_risk + f"/{token_address}/report"
-        token_data = self.requests_utility.get(url)
+        
+        try:
+            token_data = self.requests_utility.get(url)
+        except Exception as e:
+            logger.error(f"⚠️ Failed to fetch LP data: {e}")
+            return "unknown"
 
         markets = token_data.get("markets", [{}])
         lp_unlocked = markets[0].get("lpUnlocked", 0)
         lp_locked = markets[0].get("lpLocked", 0)
         total_lp = lp_locked + lp_unlocked
+
         logger.debug(f"Token: {token_address}, LP Locked: {lp_locked}, LP Unlocked: {lp_unlocked}")
 
         if total_lp == 0:
-            logger.warning("❌ No LP info available — failing.")
-            return False
+            logger.warning("⚠️ No LP data found. Risk score: 0")
+            return "unknown"
 
         locked_ratio = lp_locked / total_lp
-        if locked_ratio < 0.3:
-            logger.warning(f"⚠️ Only {locked_ratio*100:.1f}% LP locked — high risk, but allowed.")
-            return True  # We still allow it for now
+        logger.info(f"🔒 LP Locked Ratio: {locked_ratio:.2f}")
 
-        logger.info("✅ LP lock ratio acceptable. Token is safer.")
-        return True
+        if locked_ratio < 0.3:
+            logger.warning(f"⚠️ Low LP lock ratio ({locked_ratio:.1%}) — risky")
+            return "risky"
+
+        logger.info("✅ LP looks healthy.")
+        return "safe"
+
 
