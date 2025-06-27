@@ -36,4 +36,4 @@ class DexscannerUtility:
         logger.info("Retriving token pair address ...")
         url = self.pool + f"/{chain_id}/{tokenAddress}"
         info = self.requests_utility.get(url)
-        print(info)
+        return info

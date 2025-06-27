@@ -833,7 +833,6 @@ class SolanaHandler:
         logger.warning(f"❌ {token_mint} FAILED post-buy safety check after 4 attempts.")
         self.log_failed_token(token_mint, token_owner, signature, liquidity, market_cap, final_reason)
 
-
     def log_failed_token(self, token_mint, token_owner, signature, liquidity, market_cap, reason):
         now = datetime.now()
         date_str = now.strftime("%Y-%m-%d")

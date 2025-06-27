@@ -20,3 +20,5 @@ get_files_from_server.sh
 *.tar
 scripts
 main.py
+missed_token_analysis.csv
+missed_token_analysis_checked.csv
