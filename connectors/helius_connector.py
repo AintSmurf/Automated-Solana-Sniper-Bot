@@ -20,10 +20,11 @@ logger = LoggingHandler.get_logger()
 
 # Track processed signatures to avoid duplicates
 signature_queue = deque(maxlen=500)
-signature_cache = deque(maxlen=5000)
+signature_cache = deque(maxlen=20000)
 
 latest_block_time = int(time.time())
 known_tokens = set()
+MAX_TOKEN_AGE_SECONDS = 90 
 
 
 class HeliusConnector:
@@ -47,7 +48,7 @@ class HeliusConnector:
         self.id = 1
 
     def prepare_files(self) -> None:
-        self.raydium_payload = get_payload(self.dex_name)
+        self.dex_payload = get_payload(self.dex_name)
         self.transaction_payload = get_payload("Transaction")
         self.transaction_simulation_payload = get_payload("Transaction_simulation")
         self.token_address_payload = get_payload("Token_adress_payload")
@@ -84,13 +85,17 @@ class HeliusConnector:
                 )
                 return
             # Check if the token was minted before this transaction
-            if not self.is_new_token(token_mint):
-                logger.info(
-                    f"⏩ Ignoring token {token_mint}: Already minted before this transaction."
-                )
+            age = self._get_token_age(token_mint)
+
+            if age is None:
+                logger.warning(f"⚠️ Could not determine mint age for {token_mint}, skipping.")
                 return
 
-            logger.info(f"✅ Passed Step 4: Token {token_mint} is newly minted.")
+            if age > MAX_TOKEN_AGE_SECONDS:
+                logger.info(f"⏩ Token {token_mint} is too old ({age}s), skipping.")
+                return
+
+            logger.info(f"✅ Passed Step 4: Token {token_mint} is {age}s old.")
 
             if token_mint in known_tokens:
                 logger.debug(f"⏩ Ignoring known token: {token_mint}")
@@ -171,9 +176,9 @@ class HeliusConnector:
     def on_open(self, ws) -> None:
         """Subscribe to logs for new liquidity pools on Raydium AMM."""
         logger.info("Subscribing to Raydium AMM logs...")
-        self.raydium_payload["id"] = self.id
+        self.dex_payload["id"] = self.id
         self.id += 1
-        ws.send(json.dumps(self.raydium_payload))
+        ws.send(json.dumps(self.dex_payload))
         logger.info("✅ Successfully subscribed to AMM liquidity logs.")
 
     def on_message(self, ws, message) -> None:
@@ -274,29 +279,6 @@ class HeliusConnector:
         time.sleep(5)
         self.start_ws()  # Auto-reconnect
 
-    def is_new_token(self, mint_address: str) -> bool:
-        """Check if a token is newly minted within the last 30 seconds using blockTime if available."""
-        self.token_address_payload["id"] = self.id
-        self.id += 1
-        self.token_address_payload["params"][0] = mint_address
-
-        response = self.requests_utility.post(
-            endpoint=self.api_key["API_KEY"], payload=self.token_address_payload
-        )
-
-        if "result" in response and response["result"]:
-            first_tx = response["result"][-1]
-            # Use blockTime if available for precise comparison
-            if "blockTime" in first_tx and first_tx["blockTime"] is not None:
-                current_time = int(time.time())
-                return (current_time - first_tx["blockTime"]) < 30
-            # Fallback: Use slot-based estimation if blockTime is missing
-            oldest_tx_slot = first_tx["slot"]
-            latest_slot = self.get_latest_slot()
-            return (latest_slot - oldest_tx_slot) < int(40 / 0.4)
-
-        return False
-
     def get_latest_slot(self):
         self.lastest_slot_paylaod["id"] = self.id
         self.id += 1
@@ -304,3 +286,23 @@ class HeliusConnector:
             endpoint=self.api_key["API_KEY"], payload=self.lastest_slot_paylaod
         )
         return response.get("result", 0)
+
+    def _get_token_age(self, mint_address: str) -> int | None:
+        """Returns age of the mint in seconds. If fails, returns None."""
+        try:
+            self.token_address_payload["id"] = self.id
+            self.id += 1
+            self.token_address_payload["params"][0] = mint_address
+
+            response = self.requests_utility.post(
+                endpoint=self.api_key["API_KEY"],
+                payload=self.token_address_payload
+            )
+
+            if "result" in response and response["result"]:
+                first_tx = response["result"][-1]
+                if "blockTime" in first_tx and first_tx["blockTime"]:
+                    return int(time.time()) - int(first_tx["blockTime"])
+        except Exception as e:
+            logger.error(f"❌ Error fetching token age: {e}")
+        return None

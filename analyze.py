@@ -108,10 +108,7 @@ class Analyzer:
                     except Exception as e:
                         print(f"⚠️ Error reading {file_path}: {e}")
                         continue
-
             final_reason = "unclassified"
-            detailed_reason, log_file = self.trace_failure_reason(mint) if mint_found else ("no_logs", None)
-
             if not mint_found:
                 final_reason = "websocket_failed"
             elif detection_flags["safety_failed"]:
@@ -128,74 +125,18 @@ class Analyzer:
                 final_reason = "incomplete chain"
             elif detection_flags["raw_websocket_detected"]:
                 final_reason = "websocket_seen_but_not_processed"
-            elif detailed_reason != "no_log_reason_found":
-                final_reason = detailed_reason
-
             results.append({
                 **token_data,
                 **detection_flags,
                 "mint_detected": mint_found,
                 "pair_detected": pair_found,
                 "final_reason": final_reason,
-                "detailed_trace": detailed_reason,
-                "log_file_match": "; ".join(sorted(matched_logs)) if matched_logs else "None",
-                "log_file_trace": log_file or "None",
+                "log_file_match": "; ".join(sorted(set(matched_logs))) if matched_logs else "None",
             })
 
         df = pd.DataFrame(results)
         df.to_csv("missed_token_analysis_checked.csv", index=False)
         print("✅ Full analysis saved to missed_token_analysis_checked.csv")
-
-
-    
-    def trace_failure_reason(self, mint):
-        log_dir = "logs/"
-        reasons_map = {
-            "empty_websocket_message": "❌ Received an empty WebSocket message.",
-            "json_decode_error": "❌ Error decoding WebSocket message:",
-            "tx_custom_error": "⚠️ TX failed with custom error",
-            "tx_non_custom_error": "⚠️ TX failed with non-custom error",
-            "no_mint_instruction": "⛔ Skipping failed TX with no mint activity.",
-            "old_transaction": "⚠️ Ignoring old transaction:",
-            "duplicate_signature": "⏩ Ignoring duplicate signature from queue",
-            "no_valid_token_mint": "⚠️ No valid token mint found",
-            "already_minted_token": "⏩ Ignoring token",
-            "low_liquidity": "⛔ Liquidity too low",
-            "scam_code_detected": "failed: scam_functions_detected",
-            "bad_holder_distribution": "failed: bad_holder_distribution",
-            "post_buy_safety_failed": "FAILED post-buy safety check",
-        }
-
-        found_reasons = set()
-        matching_files = set()
-
-        for root, _, files in os.walk(log_dir):
-            for file in files:
-                if not re.match(r".*\.log(\.\d+)?$", file):
-                    continue
-                file_path = os.path.join(root, file)
-
-                try:
-                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                        for line in f:
-                            if mint in line:
-                                for reason_key, pattern in reasons_map.items():
-                                    if pattern in line:
-                                        found_reasons.add(reason_key)
-                                        matching_files.add(file)
-                        f.seek(0)
-                        for line in f:
-                            for reason_key, pattern in reasons_map.items():
-                                if pattern in line and mint not in line:
-                                    found_reasons.add(reason_key + "_general")
-                                    matching_files.add(file)
-                except Exception as e:
-                    print(f"⚠️ Error reading {file_path}: {e}")
-
-        if not found_reasons:
-            return "no_log_reason_found", []
-        return "; ".join(sorted(found_reasons)), sorted(matching_files)
-
 
 
 
