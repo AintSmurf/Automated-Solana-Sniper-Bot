@@ -573,7 +573,6 @@ class SolanaHandler:
         except Exception as e:
             logger.error(f"❌ Error fetching contract code from Helius: {e}")
             return False
-
     # paid version of liquidty and accurate
     def get_liqudity(self, new_token_mint: str) -> float:
         try:
@@ -593,21 +592,19 @@ class SolanaHandler:
             logger.error(f"failed to retrive liquidity: {e}")
 
         return None
-
-    # free version of liquidity and estmiated
-    def parse_liquidity_logs(self, logs: list[str], token_mint: str) -> dict:
+    # For Raydium-based logs
+    def parse__raydium_liquidity_logs(self, logs: list[str], token_mint: str) -> dict:
         result = {
             "itsa": None,
             "yta": None,
             "itsa_decimals": 6,  # Default USDC
-            "yta_decimals": 9,  # Default memecoin
+            "yta_decimals": 9,   # Default memecoin
             "source": None,
         }
 
         for log in logs:
             logger.debug(f"🔍 Log line: {log}")
 
-            # --- Strategy-based pattern ---
             if result["itsa"] is None:
                 itsa_match = re.search(r"itsa[:=]?\s*([0-9]+)", log)
                 if itsa_match:
@@ -620,30 +617,52 @@ class SolanaHandler:
                     result["yta"] = int(yta_match.group(1))
                     result["source"] = "strategy"
 
-            # --- Raydium-based pattern (only if "initialize2" exists) ---
             if "initialize2: InitializeInstruction2" in log:
                 logger.debug(f"🔍 Raw initialize2 log: {log}")
-
                 pc_match = re.search(r"init_pc_amount:\s*([0-9]+)", log)
                 coin_match = re.search(r"init_coin_amount:\s*([0-9]+)", log)
 
-                logger.debug(
-                    f"💡 init_pc_amount: {pc_match.group(1) if pc_match else 'None'}"
-                )
-                logger.debug(
-                    f"💡 init_coin_amount: {coin_match.group(1) if coin_match else 'None'}"
-                )
-
                 if pc_match:
                     result["itsa"] = int(pc_match.group(1))
-                    result["itsa_decimals"] = 9  # SOL decimals
+                    result["itsa_decimals"] = 9
                     result["source"] = "raydium"
-
                 if coin_match:
                     result["yta"] = int(coin_match.group(1))
                     result["source"] = "raydium"
 
-        # --- Post-processing if both sides found ---
+        return self._calculate_liquidity(result, token_mint)
+    # For Pump.fun-based logs
+    def parse__pumpfun_liquidity_logs(self, logs: list[str], token_mint: str, transaction: dict) -> dict:
+        result = {
+            "itsa": None,
+            "yta": None,
+            "itsa_decimals": 9,  # Lamports (SOL)
+            "yta_decimals": 9,
+            "source": "pumpfun",
+        }
+
+        for log in logs:
+            if "Instruction: Buy" in log:
+                result["source"] = "pumpfun"
+
+            match_in = re.search(r"amount_in:\s*([0-9]+)", log)
+            if match_in:
+                result["itsa"] = int(match_in.group(1))
+
+            match_out = re.search(r"amount_out:\s*([0-9]+)", log)
+            if match_out:
+                result["yta"] = int(match_out.group(1))
+
+        # 🟡 Fallback: if logs didn't provide both values, use postTokenBalances
+        if (result["yta"] is None or result["yta"] == 0) and "postTokenBalances" in transaction.get("meta", {}):
+            for balance in transaction["meta"]["postTokenBalances"]:
+                if balance.get("mint") == token_mint:
+                    result["yta"] = int(balance["uiTokenAmount"]["amount"])
+                    result["yta_decimals"] = balance["uiTokenAmount"]["decimals"]
+
+        return self._calculate_liquidity(result, token_mint)
+    # Shared liquidity post-processing
+    def _calculate_liquidity(self, result: dict, token_mint: str) -> dict:
         if result["itsa"] is not None and result["yta"] is not None:
             try:
                 result["yta_decimals"] = self.get_token_decimals(token_mint)
@@ -653,7 +672,7 @@ class SolanaHandler:
 
             itsa_usd = result["itsa"] / (10 ** result["itsa_decimals"])
 
-            if result["source"] == "raydium":
+            if result["source"] in ["raydium", "pumpfun"]:
                 try:
                     sol_price = self.get_sol_price()
                     itsa_usd *= sol_price
@@ -668,12 +687,16 @@ class SolanaHandler:
             result["launch_price_usd"] = (
                 round(itsa_usd / yta_tokens, 8) if yta_tokens > 0 else 0
             )
-
         return result
-
     # helper free version of liquidity and estmiated
-    def analyze_liquidty(self, logs: list[str], token_mint: str):
-        liquidity_data = self.parse_liquidity_logs(logs, token_mint)
+    def analyze_liquidty(self, logs: list[str], token_mint: str, dex: str, transaction):
+        if dex.lower() == "raydium":
+            liquidity_data = self.parse__raydium_liquidity_logs(logs, token_mint)
+        elif dex.lower() == "pumpfun":
+            liquidity_data = self.parse__pumpfun_liquidity_logs(logs, token_mint, transaction)
+        else:
+            logger.warning(f"Unknown DEX: {dex}")
+            return 0
 
         if liquidity_data.get("liquidity_usd", 0) > 0:
             liquidity = liquidity_data["liquidity_usd"]
@@ -684,6 +707,7 @@ class SolanaHandler:
             return liquidity
         else:
             logger.info("ℹ️ No liquidity info found in logs.")
+            return 0
 
     def get_largest_accounts(self, token_mint: str):
         """Fetch largest token holders and analyze risk."""

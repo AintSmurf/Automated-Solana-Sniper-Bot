@@ -38,6 +38,8 @@ class HeliusConnector:
         self.api_key = credentials_utility.get_helius_api_key()
         self.dex_name = credentials_utility.get_dex()["DEX"]
         self.latest_block_time = int(time.time())
+        self.pending_tokens = {}
+        threading.Thread(target=self.track_pending_tokens_loop, daemon=True).start()
         if devnet:
             self.wss_url = HELIUS["LOGS_SOCKET_DEVNET"] + self.api_key["API_KEY"]
         else:
@@ -66,6 +68,7 @@ class HeliusConnector:
             tx_data = self.requests_utility.post(
                 endpoint=self.api_key["API_KEY"], payload=self.transaction_payload
             )
+            results = tx_data.get("result", {})
             post_token_balances = (
                 tx_data.get("result", {}).get("meta", {}).get("postTokenBalances", [])
             )
@@ -76,6 +79,9 @@ class HeliusConnector:
             token_owner = (
                 post_token_balances[0]["owner"] if post_token_balances else "N/A"
             )
+            if signature in self.pending_tokens:
+                self.pending_tokens[signature]["token_mint"] = token_mint
+                self.pending_tokens[signature]["owner"] = token_owner
             logs = tx_data.get("result", {}).get("meta", {}).get("logMessages", [])
 
             logger.debug(f"transaction response:{tx_data}")
@@ -108,7 +114,7 @@ class HeliusConnector:
             now = datetime.now()
             date_str = now.strftime("%Y-%m-%d")
             time_str = now.strftime("%H:%M:%S")
-            liquidity = self.solana_manager.analyze_liquidty(logs, token_mint)
+            liquidity = self.solana_manager.analyze_liquidty(logs, token_mint,self.dex_name,results)
             market_cap = "N/A"
             if liquidity > 1500:
                 logger.info(
@@ -174,12 +180,12 @@ class HeliusConnector:
         self.ws.run_forever()
 
     def on_open(self, ws) -> None:
-        """Subscribe to logs for new liquidity pools on Raydium AMM."""
-        logger.info("Subscribing to Raydium AMM logs...")
+        """Subscribe to logs for new liquidity pools on solana."""
+        logger.info(f"Subscribing to {self.dex_payload} AMM logs...")
         self.dex_payload["id"] = self.id
         self.id += 1
         ws.send(json.dumps(self.dex_payload))
-        logger.info("✅ Successfully subscribed to AMM liquidity logs.")
+        logger.info("✅ Successfully subscribed to liquidity logs.")
 
     def on_message(self, ws, message) -> None:
         """Handles incoming WebSocket messages for detecting new Raydium and Pump.fun tokens on Solana."""
@@ -231,11 +237,19 @@ class HeliusConnector:
             )
             mint_to_executed = any("Instruction: MintTo" in log for log in logs)
 
-            if not (mint_initialized and mint_to_executed):
+            if not mint_initialized:
                 logger.debug("⛔ Skipping failed TX with no mint activity.")
                 return
 
             # Check for duplicate
+            if signature not in self.pending_tokens:
+                self.pending_tokens[signature] = {
+                    "first_seen": int(time.time()),
+                    "checked": False,
+                    "token_mint": None,
+                    "owner": "N/A",
+                }
+            
             if signature in signature_cache:
                 return
             signature_cache.append(signature)
@@ -306,3 +320,56 @@ class HeliusConnector:
         except Exception as e:
             logger.error(f"❌ Error fetching token age: {e}")
         return None
+
+    def track_pending_tokens_loop(self):
+        logger.info("🕵️‍♂️ Starting delayed liquidity tracker thread...")
+        while True:
+            now = int(time.time())
+            for sig, info in list(self.pending_tokens.items()):
+                if info.get("checked", False):
+                    continue
+
+                token_mint = info.get("token_mint")
+                if not token_mint:
+                    continue
+
+                if now - info["first_seen"] > 300:
+                    logger.info(f"🧹 Removing stale token: {token_mint or sig}")
+                    del self.pending_tokens[sig]
+                    continue
+
+                try:
+                    logger.info(f"🔄 Checking for new TXs for {token_mint}...")
+                    tx_signatures = self.get_recent_transactions_for_token(token_mint)
+
+                    for tx_sig in tx_signatures:
+                        if tx_sig in signature_cache:
+                            continue
+
+                        logger.info(f"📬 Queuing TX {tx_sig} for processing...")
+                        signature_cache.append(tx_sig)
+                        signature_queue.append(tx_sig)
+                        info["checked"] = True
+                        break  # One match is enough
+
+                except Exception as e:
+                    logger.error(f"❌ Error scanning TXs for {token_mint}: {e}")
+
+            time.sleep(10)
+
+    def get_recent_transactions_for_token(self, token_mint: str) -> list[str]:
+        try:
+            self.token_address_payload["id"] = self.id
+            self.id += 1
+            self.token_address_payload["params"][0] = token_mint
+
+            response = self.requests_utility.post(
+                endpoint=self.api_key["API_KEY"],
+                payload=self.token_address_payload
+            )
+
+            txs = response.get("result", [])
+            return [tx.get("signature") for tx in txs if "signature" in tx]
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch recent TXs for token {token_mint}: {e}")
+            return []
