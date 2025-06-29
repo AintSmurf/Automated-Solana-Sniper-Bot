@@ -13,6 +13,7 @@ from config.web_socket import HELIUS
 from collections import deque
 from utilities.rug_check_utility import RugCheckUtility
 import threading
+from config.dex_detection_rules import DEX_DETECTION_RULES
 
 
 # set up logger
@@ -24,7 +25,8 @@ signature_cache = deque(maxlen=20000)
 
 latest_block_time = int(time.time())
 known_tokens = set()
-MAX_TOKEN_AGE_SECONDS = 90 
+MAX_TOKEN_AGE_SECONDS = 180
+MIN_TOKEN_LIQUIDITY = 1000
 
 
 class HeliusConnector:
@@ -79,9 +81,6 @@ class HeliusConnector:
             token_owner = (
                 post_token_balances[0]["owner"] if post_token_balances else "N/A"
             )
-            if signature in self.pending_tokens:
-                self.pending_tokens[signature]["token_mint"] = token_mint
-                self.pending_tokens[signature]["owner"] = token_owner
             logs = tx_data.get("result", {}).get("meta", {}).get("logMessages", [])
 
             logger.debug(f"transaction response:{tx_data}")
@@ -90,6 +89,17 @@ class HeliusConnector:
                     f"⚠️ No valid token mint found for transaction: {signature}"
                 )
                 return
+            # If not already tracked by mint, move data over
+            if token_mint not in self.pending_tokens:
+                self.pending_tokens[token_mint] = {
+                    "first_seen": self.pending_tokens.get(signature, {}).get("first_seen", int(time.time())),
+                    "checked": False,
+                    "signatures": {signature},
+                    "owner": token_owner,
+                }
+            else:
+                self.pending_tokens[token_mint]["signatures"].add(signature)
+
             # Check if the token was minted before this transaction
             age = self._get_token_age(token_mint)
 
@@ -116,11 +126,11 @@ class HeliusConnector:
             time_str = now.strftime("%H:%M:%S")
             liquidity = self.solana_manager.analyze_liquidty(logs, token_mint,self.dex_name,results)
             market_cap = "N/A"
-            if liquidity > 1500:
+            if liquidity > MIN_TOKEN_LIQUIDITY:
                 logger.info(
                     f"🚀 LIQUIDITY passed: ${liquidity:.2f} — considering buy for {token_mint}"
                 )
-                self.pending_tokens[signature]["checked"] = True
+                self.pending_tokens[token_mint]["checked"] = True
                 known_tokens.add(token_mint)
                 # Simulated BUY (replace this with real buy() when ready)
                 logger.info(f"🧪 [SIM MODE] Would BUY {token_mint} with $25")
@@ -230,16 +240,16 @@ class HeliusConnector:
             else:
                 logger.debug(f"⚠️ TX failed with non-custom error: {error}")
 
-            # Skip the TX only if it didn't actually try to mint
-            mint_initialized = any(
-                "Instruction: InitializeMint" in log
-                or "Instruction: InitializeMint2" in log
+
+            detection_rules = DEX_DETECTION_RULES.get(self.dex_name, [])
+
+            mint_related = any(
+                any(rule in log for rule in detection_rules)
                 for log in logs
             )
-            mint_to_executed = any("Instruction: MintTo" in log for log in logs)
 
-            if not mint_initialized:
-                logger.debug("⛔ Skipping failed TX with no mint activity.")
+            if not mint_related:
+                logger.debug(f"⛔ Skipping TX: No {self.dex_name} launch indicators found.")
                 return
 
             # Check for duplicate
@@ -326,17 +336,13 @@ class HeliusConnector:
         logger.info("🕵️‍♂️ Starting delayed liquidity tracker thread...")
         while True:
             now = int(time.time())
-            for sig, info in list(self.pending_tokens.items()):
+            for token_mint, info in list(self.pending_tokens.items()):
                 if info.get("checked", False):
                     continue
 
-                token_mint = info.get("token_mint")
-                if not token_mint:
-                    continue
-
                 if now - info["first_seen"] > 300:
-                    logger.info(f"🧹 Removing stale token: {token_mint or sig}")
-                    del self.pending_tokens[sig]
+                    logger.info(f"🧹 Removing stale token: {token_mint}")
+                    del self.pending_tokens[token_mint]
                     continue
 
                 try:
@@ -350,7 +356,7 @@ class HeliusConnector:
                         logger.info(f"📬 Queuing TX {tx_sig} for processing...")
                         signature_cache.append(tx_sig)
                         signature_queue.append(tx_sig)
-                        break 
+                        break
 
                 except Exception as e:
                     logger.error(f"❌ Error scanning TXs for {token_mint}: {e}")

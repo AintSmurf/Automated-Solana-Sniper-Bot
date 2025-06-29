@@ -642,23 +642,39 @@ class SolanaHandler:
         }
 
         for log in logs:
-            if "Instruction: Buy" in log:
+            if "SwapEvent" in log or "Instruction: Buy" in log:
                 result["source"] = "pumpfun"
 
-            match_in = re.search(r"amount_in:\s*([0-9]+)", log)
-            if match_in:
-                result["itsa"] = int(match_in.group(1))
+                swap_match = re.search(r"amount_in\s*:\s*([0-9]+),\s*amount_out\s*:\s*([0-9]+)", log)
+                if swap_match:
+                    result["itsa"] = int(swap_match.group(1))
+                    result["yta"] = int(swap_match.group(2))
 
-            match_out = re.search(r"amount_out:\s*([0-9]+)", log)
-            if match_out:
-                result["yta"] = int(match_out.group(1))
+            # fallback if log format is different
+            if result["itsa"] is None:
+                match_in = re.search(r"amount_in\s*:\s*([0-9]+)", log)
+                if match_in:
+                    result["itsa"] = int(match_in.group(1))
+
+            if result["yta"] is None:
+                match_out = re.search(r"amount_out\s*:\s*([0-9]+)", log)
+                if match_out:
+                    result["yta"] = int(match_out.group(1))
 
         # 🟡 Fallback: if logs didn't provide both values, use postTokenBalances
-        if (result["yta"] is None or result["yta"] == 0) and "postTokenBalances" in transaction.get("meta", {}):
+        if (result["yta"] is None or result["yta"] == 0 or result["itsa"] is None or result["itsa"] == 0) and "postTokenBalances" in transaction.get("meta", {}):
             for balance in transaction["meta"]["postTokenBalances"]:
-                if balance.get("mint") == token_mint:
-                    result["yta"] = int(balance["uiTokenAmount"]["amount"])
-                    result["yta_decimals"] = balance["uiTokenAmount"]["decimals"]
+                mint = balance.get("mint")
+                amount = int(balance["uiTokenAmount"]["amount"])
+                decimals = balance["uiTokenAmount"]["decimals"]
+
+                if mint == token_mint and (result["yta"] is None or result["yta"] == 0):
+                    result["yta"] = amount
+                    result["yta_decimals"] = decimals
+                elif mint != token_mint and (result["itsa"] is None or result["itsa"] == 0):
+                    result["itsa"] = amount
+                    result["itsa_decimals"] = decimals
+
 
         return self._calculate_liquidity(result, token_mint)
     # Shared liquidity post-processing
@@ -687,6 +703,7 @@ class SolanaHandler:
             result["launch_price_usd"] = (
                 round(itsa_usd / yta_tokens, 8) if yta_tokens > 0 else 0
             )
+            logger.debug(f"🧪 Liquidity calc for {token_mint} | itsa: {result['itsa']} | yta: {result['yta']} | USD: {result.get('liquidity_usd', 0)}")
         return result
     # helper free version of liquidity and estmiated
     def analyze_liquidty(self, logs: list[str], token_mint: str, dex: str, transaction):
