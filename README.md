@@ -2,10 +2,11 @@
 
 ## Overview
 
-**Solana Sniper Bot** is a high-performance, real-time trading automation tool designed to detect and evaluate newly launched tokens on the Solana blockchain. Using **Helius WebSocket logs**, the bot identifies fresh token mints (e.g. via **Raydium** or **Pump.fun**) and runs them through a rigorous anti-scam pipeline. If deemed safe, tokens are logged, optionally bought, and monitored for profit-taking or stop-loss triggers.
+**Solana Sniper Bot** is a high-performance, real-time trading automation tool designed to detect, evaluate, and act on newly launched tokens on the Solana blockchain.
 
-🔧 The bot includes fully implemented **buy/sell mechanics** via Jupiter & Raydium swaps — currently under controlled testing.  
-📊 Real-time results are recorded to CSV and optionally sent to Discord.
+It connects directly to **Helius WebSocket logs** to monitor real-time token mints (via **Raydium**, **Pump.fun**, and others), and runs advanced **anti-scam checks** including liquidity validation, contract safety, holder distribution, and price manipulation.
+
+🧠 If a token passes all checks, the bot can **automatically simulate or execute trades** via **Jupiter's AMM aggregator**, then monitor the token for take-profit or stop-loss conditions.
 
 ---
 
@@ -25,51 +26,59 @@
 
 ## ✅ Prerequisites
 
-To use the Solana Sniper Bot, you’ll need:
+You'll need the following before running the bot:
 
-- A funded **Solana Wallet**
-- A **Helius API Key** (WebSocket + REST)
-- A **Discord Bot Token** *(optional)*
+- A funded **Solana wallet**
+- A **Helius API Key** (WebSocket + REST access)
+- *(Optional)* **Jupiter API Key** (for price, swap, quote endpoints)
+- *(Optional)* **BirdEye API Key** (for liquidity & price fallback)
+- *(Optional)* A **Discord bot token** for alerts
 
 ---
 
 ## ✨ Features
 
-- 🧠 **Real-Time WebSocket Monitoring**  
-  Instantly detects newly launched tokens via Helius logs.
+- 🔎 **Real-Time Token Detection**
+  - Detects brand new tokens launched via Raydium or Pump.fun
+  - Pulls logs directly from the Solana blockchain via Helius
 
-- 🛡️ **Advanced Scam Detection Engine**  
-  - Mint/freeze authority audit  
-  - Honeypot detection (Jupiter route check)  
-  - High tax detection  
-  - Liquidity analysis (Raydium + Birdeye)  
-  - Top holder distribution check  
-  - Rug pull heuristics
+- 🛡️ **Multi-Layered Scam Detection**
+  - Mint/freeze authority audit
+  - Honeypot prevention via Jupiter route validation
+  - High tax & suspicious price ratio checks
+  - Liquidity presence via logs + Birdeye fallback
+  - Largest holders & bot-wallet clustering detection
 
-- 💰 **Buy/Sell Automation** *(Jupiter AMM)*  
-  - Simulates or executes swaps for promising tokens  
-  - Fully encoded base64 transaction builder with real signing  
-  - Customizable take-profit and stop-loss tracking
+- 💸 **Trade Execution via Jupiter**
+  - Full buy/sell flow using Jupiter’s swap API
+  - Sends raw signed base64 transactions to Helius
+  - Auto-fills token accounts if missing
 
-- 📊 **Excel Logging System**  
-  - `all_tokens_found.csv` — every detected token  
-  - `safe_tokens_YYYY-MM-DD.csv` — passed full safety check  
-  - `bought_tokens_YYYY-MM-DD.csv` — all simulated or live buys  
-  - `scam_tokens_YYYY-MM-DD.csv` — detected scam tokens
+- 📈 **Post-Buy Monitoring**
+  - Optional safety re-check (LP lock, scam, holders)
+  - Simulates 4 rounds of retry if uncertain
+  - CSV logs for tracking safe vs scam token outcomes
 
-- 📢 **Discord Bot Alerts** *(optional)*  
-  - Alerts your channel when a safe token is detected
+- 🧾 **Modular Excel-Based Logging**
+  - `all_tokens_found.csv` — all detected tokens
+  - `safe_tokens_<date>.csv` — tokens that passed post-buy safety
+  - `scam_tokens_<date>.csv` — tokens flagged as risky
+  - `bought_tokens_<date>.csv` — all simulated/real trades
 
-- 🧹 **Modular & Threaded Architecture**  
-  - WebSocket, transaction fetcher, position tracker, and Discord all run independently
+- 💬 **Optional Discord Integration**
+  - Sends alerts for safe tokens
+  - Includes price, liquidity, and token metadata
+
+- 🧵 **Threaded Architecture**
+  - WebSocket listener, transaction fetcher, delayed liquidity checker, and Discord bot all run independently for performance
 
 ---
 
 ## ⚙️ Requirements
 
 - Python 3.8+
-- `solana`, `solders`, `pandas`, `requests`, and other Python packages in `requirements.txt`
-- Stable internet connection
+- `solana`, `solders`, `pandas`, `requests`, `websocket-client`, `python-dotenv`, etc.
+- Dependencies listed in `requirements.txt`
 
 ---
 
@@ -102,10 +111,13 @@ pip install -r requirements.txt
 
 Edit or export these values in `.env` or credentials utility script:
 
-```
+```env
 API_KEY=your_helius_api_key
-SOLANA_PRIVATE_KEY=your_base58_encoded_solana_wallet_key
-DISCORD_TOKEN=your_discord_bot_token
+SOLANA_PRIVATE_KEY=your_base58_private_key
+JUPITER_API_KEY=your_jupiter_api_key (optional)
+BIRD_EYE_API_KEY=your_birdeye_key (optional)
+DISCORD_TOKEN=your_discord_bot_token (optional)
+DEX="Pumpfun" or "Raydium"
 ```
 
 Linux/macOS:
