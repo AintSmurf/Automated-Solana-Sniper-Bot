@@ -163,7 +163,7 @@ class HeliusConnector:
     def run_transaction_fetcher(self):
         while True:
             if not signature_queue:
-                time.sleep(0.5)
+                time.sleep(2)
                 continue
 
             logger.info(
@@ -192,7 +192,7 @@ class HeliusConnector:
 
     def on_open(self, ws) -> None:
         """Subscribe to logs for new liquidity pools on solana."""
-        logger.info(f"Subscribing to {self.dex_payload} AMM logs...")
+        logger.info(f"Subscribing to {self.dex_name} AMM logs...")
         self.dex_payload["id"] = self.id
         self.id += 1
         ws.send(json.dumps(self.dex_payload))

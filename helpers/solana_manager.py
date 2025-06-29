@@ -22,11 +22,16 @@ from utilities.rug_check_utility import RugCheckUtility
 import requests
 from datetime import datetime
 import re
+from helpers.rate_limiter_jupiter import RateLimiter
 import time
+
+
+
 
 # Set up logger
 logger = LoggingHandler.get_logger()
 special_logger = LoggingHandler.get_special_debug_logger()
+JUPITER_LIMITER = RateLimiter()
 
 
 class SolanaHandler:
@@ -256,6 +261,7 @@ class SolanaHandler:
 
     def get_quote(self, input_mint, output_mint, amount=1000, slippage=5):
         try:
+            JUPITER_LIMITER.wait()
             quote_url = f"{JUPITER_STATION['QUOTE_ENDPOINT']}?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage}"
             quote_response = self.jupiter_requests.get(quote_url)
 
@@ -278,6 +284,7 @@ class SolanaHandler:
             return None
 
         try:
+            JUPITER_LIMITER.wait()
             self.swap_payload["userPublicKey"] = str(self.keypair.pubkey())
             self.swap_payload["quoteResponse"] = quote_response
 
@@ -639,6 +646,7 @@ class SolanaHandler:
             "itsa_decimals": 9,  # Lamports (SOL)
             "yta_decimals": 9,
             "source": "pumpfun",
+            "itsa_mint": None,
         }
 
         for log in logs:
@@ -674,6 +682,8 @@ class SolanaHandler:
                 elif mint != token_mint and (result["itsa"] is None or result["itsa"] == 0):
                     result["itsa"] = amount
                     result["itsa_decimals"] = decimals
+                    result["itsa_mint"] = mint
+
 
 
         return self._calculate_liquidity(result, token_mint)
@@ -687,14 +697,19 @@ class SolanaHandler:
                 result["yta_decimals"] = 9
 
             itsa_usd = result["itsa"] / (10 ** result["itsa_decimals"])
+            SOL_MINTS = {
+                "So11111111111111111111111111111111111111112", 
+            }
+            is_sol = result.get("itsa_mint") in SOL_MINTS or result["itsa_decimals"] == 9
 
-            if result["source"] in ["raydium", "pumpfun"]:
+            if result["source"] in ["raydium", "pumpfun"] and is_sol:
                 try:
                     sol_price = self.get_sol_price()
                     itsa_usd *= sol_price
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to fetch SOL price: {e}")
                     itsa_usd = 0
+
 
             yta_tokens = result["yta"] / (10 ** result["yta_decimals"])
 
@@ -798,10 +813,12 @@ class SolanaHandler:
 
     def get_token_prices(self, mints: list) -> dict:
         ids = ",".join(mints)
+        JUPITER_LIMITER.wait()
         endpoint = f"{JUPITER_STATION['PRICE']}?ids={ids}&showExtraInfo=true"
         return self.jupiter_requests.get(endpoint)
 
     def get_token_price(self, mint: str) -> float:
+        JUPITER_LIMITER.wait()
         endpoint = f"{JUPITER_STATION['PRICE']}?ids={mint}&showExtraInfo=true"
         data = self.jupiter_requests.get(endpoint)
         return data["data"][mint]["price"]
