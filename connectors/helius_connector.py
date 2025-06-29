@@ -120,6 +120,7 @@ class HeliusConnector:
                 logger.info(
                     f"🚀 LIQUIDITY passed: ${liquidity:.2f} — considering buy for {token_mint}"
                 )
+                self.pending_tokens[signature]["checked"] = True
                 known_tokens.add(token_mint)
                 # Simulated BUY (replace this with real buy() when ready)
                 logger.info(f"🧪 [SIM MODE] Would BUY {token_mint} with $25")
@@ -349,8 +350,7 @@ class HeliusConnector:
                         logger.info(f"📬 Queuing TX {tx_sig} for processing...")
                         signature_cache.append(tx_sig)
                         signature_queue.append(tx_sig)
-                        info["checked"] = True
-                        break  # One match is enough
+                        break 
 
                 except Exception as e:
                     logger.error(f"❌ Error scanning TXs for {token_mint}: {e}")
