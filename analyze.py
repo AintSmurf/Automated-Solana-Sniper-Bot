@@ -7,7 +7,7 @@ class Analyzer:
     def __init__(self):
         self.dx = DexscannerUtility()
 
-    def analyze_token(self, token_address):
+    def analyze_token(self, token_address,dex):
         all_pairs = self.dx.get_token_pair_address("solana", token_address)
         results = []
 
@@ -19,8 +19,10 @@ class Analyzer:
             try:
                 liquidity = pair.get("liquidity", {}).get("usd", 0)
                 if liquidity is None or liquidity < 10:
-                    continue  # Skip trash
-
+                    continue
+                dex_id =  pair.get("dexId",{})
+                if dex_id not in dex:
+                    continue
                 results.append({
                     "token": pair.get("baseToken", {}).get("address", ""),
                     "name": pair.get("baseToken", {}).get("name", ""),
@@ -41,24 +43,27 @@ class Analyzer:
 
         return results
 
-    def make_it_csv(self):
-        token_list = [
-            "R63mHshFgKqg8XbvGC8cS1fnHHpcNn2uFGXFGjQ5MGF",
-            "2obLASom28dxTDLJxfocejSD5emSzbESWmXuX4Fubonk",
-            "4SkzBV9WKUNa6FB2qwAeiuXbcyZyfHmGo4QmLxcLbonk",
-        ]
-
+    def make_it_csv(self,path=None,dex=None):
+        token_list = []
+        if path:
+            token_df = pd.read_excel(path)
+            token_list = token_df["token address"].dropna().tolist()
+        else:
+            token_list = [
+                "R63mHshFgKqg8XbvGC8cS1fnHHpcNn2uFGXFGjQ5MGF",
+                "2obLASom28dxTDLJxfocejSD5emSzbESWmXuX4Fubonk",
+                "4SkzBV9WKUNa6FB2qwAeiuXbcyZyfHmGo4QmLxcLbonk",
+            ]
         all_data = []
         for token in token_list:
             print(f"🔍 Analyzing {token}...")
-            data = self.analyze_token(token)
+            data = self.analyze_token(token,dex)
             all_data.extend(data)
 
         pd.DataFrame(all_data).to_csv("missed_token_analysis.csv", index=False)
         print("✅ CSV saved: missed_token_analysis.csv")
 
     def run_script_on_logs(self, tokens):
-
         log_dir = "logs/"
         results = []
 
@@ -79,59 +84,69 @@ class Analyzer:
             pair = token_data["pairAddress"]
 
             detection_flags = {k: False for k in steps}
-            mint_found = False
-            pair_found = False
-            matched_logs = set()
-            marker_sources = {}
+            first_match = {}  # filename: line_number
+            first_reason = None
 
             for root, _, files in os.walk(log_dir):
                 for file in files:
                     if not re.match(r".*\.log(\.\d+)?$", file):
                         continue
                     file_path = os.path.join(root, file)
+
                     try:
                         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                            matched_this_file = False
-                            for line in f:
-                                if mint in line:
-                                    mint_found = True
-                                    matched_this_file = True
-                                if pair in line:
-                                    pair_found = True
-                                    matched_this_file = True
+                            for line_num, line in enumerate(f, start=1):
+                                matched = False
+
+                                if mint in line or pair in line:
+                                    if file not in first_match:
+                                        first_match[file] = line_num
+                                    matched = True
+
                                 for key, marker in steps.items():
                                     if marker in line and mint in line:
-                                        detection_flags[key] = True
-                                        marker_sources.setdefault(key, []).append(file)
-                            if matched_this_file:
-                                matched_logs.add(file)
+                                        if not detection_flags[key]:
+                                            detection_flags[key] = True
+                                            if not first_reason:
+                                                first_reason = key  # First reason = first failed/passed step
+
+                                if matched and not first_reason and "websocket response" not in line:
+                                    first_reason = "websocket_seen_but_not_processed"
+
                     except Exception as e:
                         print(f"⚠️ Error reading {file_path}: {e}")
                         continue
-            final_reason = "unclassified"
-            if not mint_found:
-                final_reason = "websocket_failed"
-            elif detection_flags["safety_failed"]:
-                final_reason = "post_buy_safety_failed"
-            elif detection_flags["safety_passed"]:
-                final_reason = "✅ safe"
-            elif detection_flags["liquidity_failed"]:
-                final_reason = "low_liquidity"
-            elif detection_flags["liquidity_passed"]:
-                final_reason = "passed_liquidity"
-            elif detection_flags["step_4_token_minted"]:
-                final_reason = "already minted?"
-            elif detection_flags["step_1_mint_instruction"]:
-                final_reason = "incomplete chain"
-            elif detection_flags["raw_websocket_detected"]:
-                final_reason = "websocket_seen_but_not_processed"
+
+            # Determine final reason
+            final_reason = (
+                "websocket_failed" if not any(detection_flags.values()) else
+                "post_buy_safety_failed" if detection_flags["safety_failed"] else
+                "✅ safe" if detection_flags["safety_passed"] else
+                "low_liquidity" if detection_flags["liquidity_failed"] else
+                "passed_liquidity" if detection_flags["liquidity_passed"] else
+                "already minted?" if detection_flags["step_4_token_minted"] else
+                "incomplete chain" if detection_flags["step_1_mint_instruction"] else
+                "websocket_seen_but_not_processed"
+            )
+
+            # Get the first file+line where detected
+            if first_match:
+                earliest_file = min(first_match, key=lambda k: first_match[k])
+                earliest_line = first_match[earliest_file]
+                log_ref = f"{earliest_file} (line {earliest_line})"
+            else:
+                log_ref = "None"
+
+            # Build final result row
             results.append({
-                **token_data,
-                **detection_flags,
-                "mint_detected": mint_found,
-                "pair_detected": pair_found,
+                "token": token_data.get("token", ""),
+                "name": token_data.get("name", ""),
+                "dexId": token_data.get("dexId", ""),
+                "liquidity": token_data.get("liquidity", ""),
+                "txns_h1": token_data.get("txns_h1", ""),
+                "pairCreatedAt": token_data.get("pairCreatedAt", ""),
+                "log_file": log_ref,
                 "final_reason": final_reason,
-                "log_file_match": "; ".join(sorted(set(matched_logs))) if matched_logs else "None",
             })
 
         df = pd.DataFrame(results)
@@ -142,7 +157,6 @@ class Analyzer:
 
 if __name__ == "__main__":
     analyzer = Analyzer()
-    analyzer.make_it_csv()
-
+    analyzer.make_it_csv(r"analysis-29.6.xlsx",["pumpswap", "pumpfun"])
     tokens_df = pd.read_csv("missed_token_analysis.csv")
     analyzer.run_script_on_logs(tokens_df.to_dict(orient="records"))
