@@ -89,10 +89,15 @@ class HeliusConnector:
                     f"⚠️ No valid token mint found for transaction: {signature}"
                 )
                 return
-            # If not already tracked by mint, move data over
+            # Move the token from signature key to token_mint key
+            if signature in self.pending_tokens:
+                old_data = self.pending_tokens.pop(signature)
+            else:
+                old_data = {}
+
             if token_mint not in self.pending_tokens:
                 self.pending_tokens[token_mint] = {
-                    "first_seen": self.pending_tokens.get(signature, {}).get("first_seen", int(time.time())),
+                    "first_seen": old_data.get("first_seen", int(time.time())),
                     "checked": False,
                     "signatures": {signature},
                     "owner": token_owner,
@@ -334,19 +339,40 @@ class HeliusConnector:
 
     def track_pending_tokens_loop(self):
         logger.info("🕵️‍♂️ Starting delayed liquidity tracker thread...")
+
         while True:
             now = int(time.time())
+
             for token_mint, info in list(self.pending_tokens.items()):
                 if info.get("checked", False):
                     continue
 
+                # Remove if over 5 minutes old
                 if now - info["first_seen"] > 300:
                     logger.info(f"🧹 Removing stale token: {token_mint}")
                     del self.pending_tokens[token_mint]
                     continue
 
+                # Wait at least 45 seconds before rechecking
+                if now - info["first_seen"] < 45:
+                    continue
+
+                # Only check once per 60 seconds
+                if "last_checked" in info and now - info["last_checked"] < 60:
+                    continue
+                info["last_checked"] = now
+
+                # Retry cap — 3 attempts per token
+                info.setdefault("retries", 0)
+                info["retries"] += 1
+                if info["retries"] > 3:
+                    logger.info(f"🛑 Max retries reached for {token_mint}, removing.")
+                    del self.pending_tokens[token_mint]
+                    continue
+
                 try:
                     logger.info(f"🔄 Checking for new TXs for {token_mint}...")
+
                     tx_signatures = self.get_recent_transactions_for_token(token_mint)
 
                     for tx_sig in tx_signatures:

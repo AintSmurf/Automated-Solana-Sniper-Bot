@@ -507,79 +507,6 @@ class SolanaHandler:
         logger.info("token scam test - price ratio check passed")
         logger.info(f"✅ Token {token_mint} passed Jupiter scam detection.")
         return False
-
-    def check_scam_functions_helius(self, token_mint: str) -> bool:
-        # get token worth in usd so it wont fail the jupiter
-        token_amount = self.get_solana_token_worth_in_dollars(15)
-        qoute = self.get_quote(
-            token_mint, "So11111111111111111111111111111111111111112", token_amount
-        )
-        if not qoute:
-            return False
-        if self.is_token_scam(qoute, token_mint):
-            return False
-
-        special_logger.info(f"🔍 Checking scams for {token_mint} using Helius...")
-        self.asset_payload["id"] = self.id
-        self.id += 1
-        self.asset_payload["params"]["id"] = token_mint
-
-        try:
-            response_json = self.helius_requests.post(
-                endpoint=self.api_key["API_KEY"],
-                payload=self.asset_payload,
-            )
-            special_logger.debug(f"🔍 Raw Helius Response for {response_json}")
-            if "result" not in response_json:
-                logger.warning(
-                    f"⚠️ Unexpected Helius response structure: {response_json}"
-                )
-                return False
-
-            asset_data = response_json["result"]
-            token_info = asset_data.get("token_info", {})
-
-            #  Check Mint Authority (Prevents Rug Pulls)
-            mint_authority = token_info.get("mint_authority", None)
-            if mint_authority not in [None, ""]:
-                logger.warning(
-                    f"🚨 Token {token_mint} still has mint authority ({mint_authority})! HIGH RISK."
-                )
-                return False
-
-            ## Check Freeze Authority (Prevents Wallet Freezing)
-            freeze_authority = token_info.get("freeze_authority", None)
-            if freeze_authority:
-                logger.warning(
-                    f"🚨 Token {token_mint} has freeze authority ({freeze_authority})! Devs can freeze funds. HIGH RISK."
-                )
-                return False
-
-            ##  Check Burn Status
-            if asset_data.get("burnt", False):
-                logger.warning(
-                    f"🔥 Token {token_mint} is burnt and cannot be used anymore."
-                )
-                return False
-
-            ##  Check Mutability & Ownership
-            if asset_data.get("mutable", True) and asset_data.get("authorities", []):
-                if self.rug_check_utility.is_liquidity_unlocked(token_mint):
-                    logger.warning(
-                        f"🚨 Token {token_mint} is mutable, owned by dev, AND liquidity is NOT locked! HIGH RISK."
-                    )
-                    return False
-                else:
-                    logger.info(
-                        f"⚠️ Token {token_mint} is mutable & dev-owned, but liquidity is locked. Might be safe."
-                    )
-
-            logger.info(f"✅ Token {token_mint} Safe to proceed.")
-            return True
-
-        except Exception as e:
-            logger.error(f"❌ Error fetching contract code from Helius: {e}")
-            return False
     # paid version of liquidty and accurate
     def get_liqudity(self, new_token_mint: str) -> float:
         try:
@@ -649,6 +576,7 @@ class SolanaHandler:
             "itsa_mint": None,
         }
 
+        # 🔍 Try to extract from logs
         for log in logs:
             if "SwapEvent" in log or "Instruction: Buy" in log:
                 result["source"] = "pumpfun"
@@ -658,7 +586,6 @@ class SolanaHandler:
                     result["itsa"] = int(swap_match.group(1))
                     result["yta"] = int(swap_match.group(2))
 
-            # fallback if log format is different
             if result["itsa"] is None:
                 match_in = re.search(r"amount_in\s*:\s*([0-9]+)", log)
                 if match_in:
@@ -669,8 +596,11 @@ class SolanaHandler:
                 if match_out:
                     result["yta"] = int(match_out.group(1))
 
-        # 🟡 Fallback: if logs didn't provide both values, use postTokenBalances
-        if (result["yta"] is None or result["yta"] == 0 or result["itsa"] is None or result["itsa"] == 0) and "postTokenBalances" in transaction.get("meta", {}):
+        # ✅ Fallback outside the log loop
+        if (
+            (result["yta"] is None or result["yta"] == 0 or result["itsa"] is None or result["itsa"] == 0)
+            and "postTokenBalances" in transaction.get("meta", {})
+        ):
             for balance in transaction["meta"]["postTokenBalances"]:
                 mint = balance.get("mint")
                 amount = int(balance["uiTokenAmount"]["amount"])
@@ -683,8 +613,6 @@ class SolanaHandler:
                     result["itsa"] = amount
                     result["itsa_decimals"] = decimals
                     result["itsa_mint"] = mint
-
-
 
         return self._calculate_liquidity(result, token_mint)
     # Shared liquidity post-processing
@@ -740,76 +668,6 @@ class SolanaHandler:
         else:
             logger.info("ℹ️ No liquidity info found in logs.")
             return 0
-
-    def get_largest_accounts(self, token_mint: str):
-        """Fetch largest token holders and analyze risk."""
-        logger.info(
-            f"🔍 Checking if token holders has the same percentage for {token_mint} using Helius..."
-        )
-
-        # Update payload with token mint
-        self.largest_accounts_payload["id"] = self.id
-        self.id += 1
-        self.largest_accounts_payload["params"][0] = token_mint
-
-        try:
-            response_json = self.helius_requests.post(
-                endpoint=self.api_key["API_KEY"],
-                payload=self.largest_accounts_payload,
-            )
-
-            special_logger.debug(
-                f"🔍 Raw Helius Largest Accounts Response: {response_json}"
-            )
-
-            if "result" not in response_json:
-                logger.warning(
-                    f"⚠️ Unexpected Helius response structure: {response_json}"
-                )
-                return False
-
-            holders = response_json["result"]["value"]
-            total_supply = self.get_token_supply(token_mint)
-
-            if total_supply == 0:
-                logger.error("❌ Failed to fetch token supply. Skipping analysis.")
-                return False
-
-            # Sort holders by balance (highest to lowest)
-            sorted_holders = sorted(
-                holders, key=lambda x: float(x["uiAmount"]), reverse=True
-            )
-
-            # Extract top holders and calculate their percentage of TOTAL SUPPLY
-            top_holders = sorted_holders[:10]
-            top_holder_percentages = [
-                (float(holder["uiAmount"]) / total_supply) * 100
-                for holder in top_holders
-            ]
-
-            # Check if the top holder has over 5%
-            if top_holder_percentages[0] > 10:
-                special_logger.debug("top holder has more than 5%")
-                return False
-
-            # Check for Identical Holders from Position 2-10
-            if len(top_holder_percentages) > 1:
-                min_percentage = min(top_holder_percentages[1:])
-                max_percentage = max(top_holder_percentages[1:])
-                if abs(max_percentage - min_percentage) < 0.01:
-                    special_logger.debug("bot accounts to rug pull")
-                    return False
-                # check if the rest of the wallets have higher liquidty than the developer
-                if top_holder_percentages[0] < max_percentage:
-                    special_logger.debug("top holder has lower perecntage its rug pull")
-                    return False
-
-            logger.info("\n✅ Token Holder Analysis Complete.")
-            return True
-
-        except Exception as e:
-            logger.error(f"❌ Error fetching largest accounts from Helius: {e}")
-        return False
 
     def get_token_prices(self, mints: list) -> dict:
         ids = ",".join(mints)
@@ -890,6 +748,144 @@ class SolanaHandler:
         # ❌ All attempts failed or score too low
         logger.warning(f"❌ {token_mint} FAILED post-buy safety check after 4 attempts.")
         self.log_failed_token(token_mint, token_owner, signature, liquidity, market_cap, final_reason)
+
+    def check_scam_functions_helius(self, token_mint: str) -> bool:
+        # get token worth in usd so it wont fail the jupiter
+        token_amount = self.get_solana_token_worth_in_dollars(15)
+        qoute = self.get_quote(
+            token_mint, "So11111111111111111111111111111111111111112", token_amount
+        )
+        if not qoute:
+            return False
+        if self.is_token_scam(qoute, token_mint):
+            return False
+
+        special_logger.info(f"🔍 Checking scams for {token_mint} using Helius...")
+        self.asset_payload["id"] = self.id
+        self.id += 1
+        self.asset_payload["params"]["id"] = token_mint
+
+        try:
+            response_json = self.helius_requests.post(
+                endpoint=self.api_key["API_KEY"],
+                payload=self.asset_payload,
+            )
+            special_logger.debug(f"🔍 Raw Helius Response for {response_json}")
+            if "result" not in response_json:
+                logger.warning(
+                    f"⚠️ Unexpected Helius response structure: {response_json}"
+                )
+                return False
+
+            asset_data = response_json["result"]
+            token_info = asset_data.get("token_info", {})
+
+            #  Check Mint Authority (Prevents Rug Pulls)
+            mint_authority = token_info.get("mint_authority", None)
+            if mint_authority not in [None, ""]:
+                logger.warning(
+                    f"🚨 Token {token_mint} still has mint authority ({mint_authority})! HIGH RISK."
+                )
+                return False
+
+            ## Check Freeze Authority (Prevents Wallet Freezing)
+            freeze_authority = token_info.get("freeze_authority", None)
+            if freeze_authority:
+                logger.warning(
+                    f"🚨 Token {token_mint} has freeze authority ({freeze_authority})! Devs can freeze funds. HIGH RISK."
+                )
+                return False
+
+            ##  Check Burn Status
+            if asset_data.get("burnt", False):
+                logger.warning(
+                    f"🔥 Token {token_mint} is burnt and cannot be used anymore."
+                )
+                return False
+
+            ##  Check Mutability & Ownership
+            if asset_data.get("mutable", True) and asset_data.get("authorities", []):
+                if self.rug_check_utility.is_liquidity_unlocked(token_mint):
+                    logger.warning(
+                        f"🚨 Token {token_mint} is mutable, owned by dev, AND liquidity is NOT locked! HIGH RISK."
+                    )
+                    return False
+                else:
+                    logger.info(
+                        f"⚠️ Token {token_mint} is mutable & dev-owned, but liquidity is locked. Might be safe."
+                    )
+
+            logger.info(f"✅ Token {token_mint} Safe to proceed.")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Error fetching contract code from Helius: {e}")
+            return False
+    
+    def get_largest_accounts(self, token_mint: str):
+        """Fetch largest token holders and analyze risk."""
+        logger.info(f"🔍 Checking token holders for {token_mint} using Helius...")
+
+        # Prepare payload
+        self.largest_accounts_payload["id"] = self.id
+        self.id += 1
+        self.largest_accounts_payload["params"][0] = token_mint
+
+        try:
+            response_json = self.helius_requests.post(
+                endpoint=self.api_key["API_KEY"],
+                payload=self.largest_accounts_payload,
+            )
+
+            special_logger.debug(f"🔍 Raw Helius Largest Accounts Response: {response_json}")
+
+            if "result" not in response_json:
+                logger.warning(f"⚠️ Unexpected Helius response structure: {response_json}")
+                return False
+
+            holders = response_json["result"]["value"]
+            total_supply = self.get_token_supply(token_mint)
+
+            if total_supply == 0:
+                logger.error("❌ Failed to fetch token supply. Skipping analysis.")
+                return False
+
+            # Sort holders by balance
+            sorted_holders = sorted(holders, key=lambda x: float(x["uiAmount"]), reverse=True)
+
+            top_holders = sorted_holders[:10]
+            top_holder_percentages = [
+                (float(holder["uiAmount"]) / total_supply) * 100 for holder in top_holders
+            ]
+
+            if not top_holder_percentages:
+                logger.warning("❌ No holder data found.")
+                return False
+
+            # 🚩 Flag: Top holder has too much (centralized risk)
+            if top_holder_percentages[0] > 20:
+                special_logger.debug("⚠️ Top holder owns over 20% — High centralization.")
+                return False
+
+            # 🚩 Flag: Uniform bot-like holders with high % between them
+            if len(top_holder_percentages) > 1:
+                min_pct = min(top_holder_percentages[1:])
+                max_pct = max(top_holder_percentages[1:])
+                if abs(max_pct - min_pct) < 0.01 and max_pct > 5:
+                    special_logger.debug("⚠️ Uniform bot-like holders >5% — Risky.")
+                    return False
+
+                # 🚩 Flag: Dev not top holder + others dominate
+                if top_holder_percentages[0] < 2 and max_pct > 6:
+                    special_logger.debug("⚠️ Top holder too small, other wallets dominate — Risk.")
+                    return False
+
+            logger.info("✅ Token Holder Analysis Complete.")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Error fetching largest accounts from Helius: {e}")
+            return False
 
     def log_failed_token(self, token_mint, token_owner, signature, liquidity, market_cap, reason):
         now = datetime.now()
