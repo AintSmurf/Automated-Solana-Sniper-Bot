@@ -701,7 +701,7 @@ class SolanaHandler:
                     score += 0.5
                 elif lp_status == "unknown":
                     score += 0.25
-
+                special_logger.debug(f"score after liquidty {score} for {token_mint}")
                 # 2️⃣ Scam Code Check
                 if not self.check_scam_functions_helius(token_mint):
                     final_reason = "scam_functions_detected"
@@ -862,10 +862,13 @@ class SolanaHandler:
                 logger.warning("❌ No holder data found.")
                 return False
 
-            # 🚩 Flag: Top holder has too much (centralized risk)
-            if top_holder_percentages[0] > 20:
-                special_logger.debug("⚠️ Top holder owns over 20% — High centralization.")
-                return False
+            # # 🚩 Flag: Top holder has too much (centralized risk)
+            # if top_holder_percentages[0] > 50:
+            #     special_logger.debug("⚠️ Top holder owns over 20% — High centralization.")
+            #     return False
+            special_logger.info(
+                f"ℹ️ Top holder owns {top_holder_percentages[0]:.2f}% — Ignored due to hit-and-run strategy."
+            )
 
             # 🚩 Flag: Uniform bot-like holders with high % between them
             if len(top_holder_percentages) > 1:
