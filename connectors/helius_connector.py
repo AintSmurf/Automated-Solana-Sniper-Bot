@@ -320,7 +320,7 @@ class HeliusConnector:
 
             # Step 6: Prefetch recent txs for the same token
             try:
-                txs = self.get_recent_transactions_for_token(token_mint)[1:6]
+                txs = self.get_recent_transactions_for_token(token_mint)[1:4]
                 if txs:
                     logger.info(f"📦 Found {len(txs)} early txs after mint — pre-queuing...")
                 else:
@@ -417,9 +417,15 @@ class HeliusConnector:
         signature_queue_copy = list(signature_queue)
         signature_queue.clear()
         for sig in signature_queue_copy:
-            mint = signature_to_token_mint.get(sig)
+            if isinstance(sig, tuple):
+                signature = sig[0]
+            else:
+                signature = sig
+
+            mint = signature_to_token_mint.get(signature)
             if mint != token_mint:
                 signature_queue.append(sig)
+
         removed = 0
         for sig, mint in list(signature_to_token_mint.items()):
             if mint == token_mint:
