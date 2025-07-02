@@ -595,6 +595,8 @@ class SolanaHandler:
                 match_out = re.search(r"amount_out\s*:\s*([0-9]+)", log)
                 if match_out:
                     result["yta"] = int(match_out.group(1))
+            if result["itsa"] is not None and result["yta"] is not None:
+                return self._calculate_liquidity(result, token_mint) 
 
         # ✅ Fallback outside the log loop
         if (
@@ -702,14 +704,7 @@ class SolanaHandler:
                 elif lp_status == "unknown":
                     score += 0.25
                 special_logger.debug(f"score after liquidty {score} for {token_mint}")
-                # 2️⃣ Scam Code Check
-                if not self.check_scam_functions_helius(token_mint):
-                    final_reason = "scam_functions_detected"
-                    logger.warning(f"❌ {token_mint} failed: {final_reason}")
-                    continue
-                score += 1
-
-                # 3️⃣ Holder Distribution
+                # 2️⃣ Holder Distribution
                 if not self.get_largest_accounts(token_mint):
                     final_reason = "bad_holder_distribution"
                     logger.warning(f"❌ {token_mint} failed: {final_reason}")
@@ -718,7 +713,7 @@ class SolanaHandler:
 
                 logger.info(f"📊 Final score for {token_mint}: {score}/3")
 
-                if score >= 2.5:
+                if score >= 1.5:
                     logger.info(f"✅ {token_mint} PASSED post-buy safety check. Logging as safe.")
                     now = datetime.now()
                     date_str = now.strftime("%Y-%m-%d")

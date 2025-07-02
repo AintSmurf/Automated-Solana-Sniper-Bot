@@ -14,6 +14,8 @@ from collections import deque
 from utilities.rug_check_utility import RugCheckUtility
 import threading
 from config.dex_detection_rules import DEX_DETECTION_RULES
+import random
+
 
 
 # set up logger
@@ -22,6 +24,10 @@ logger = LoggingHandler.get_logger()
 # Track processed signatures to avoid duplicates
 signature_queue = deque(maxlen=500)
 signature_cache = deque(maxlen=20000)
+
+#to clear
+signature_to_token_mint = {}
+
 
 latest_block_time = int(time.time())
 known_tokens = set()
@@ -40,8 +46,6 @@ class HeliusConnector:
         self.api_key = credentials_utility.get_helius_api_key()
         self.dex_name = credentials_utility.get_dex()["DEX"]
         self.latest_block_time = int(time.time())
-        self.pending_tokens = {}
-        threading.Thread(target=self.track_pending_tokens_loop, daemon=True).start()
         if devnet:
             self.wss_url = HELIUS["LOGS_SOCKET_DEVNET"] + self.api_key["API_KEY"]
         else:
@@ -75,12 +79,17 @@ class HeliusConnector:
                 tx_data.get("result", {}).get("meta", {}).get("postTokenBalances", [])
             )
 
-            token_mint = (
-                post_token_balances[0]["mint"] if post_token_balances else "N/A"
-            )
-            token_owner = (
-                post_token_balances[0]["owner"] if post_token_balances else "N/A"
-            )
+            if not post_token_balances or "mint" not in post_token_balances[0]:
+                logger.warning(f"⚠️ No valid token mint found for transaction: {signature}")
+                return
+
+            token_mint = post_token_balances[0]["mint"]
+            token_owner = post_token_balances[0].get("owner", "N/A")
+
+            if token_mint in [None, "N/A"]:
+                logger.warning(f"⚠️ Invalid token mint for TX {signature}")
+                return
+
             logs = tx_data.get("result", {}).get("meta", {}).get("logMessages", [])
 
             logger.debug(f"transaction response:{tx_data}")
@@ -89,22 +98,6 @@ class HeliusConnector:
                     f"⚠️ No valid token mint found for transaction: {signature}"
                 )
                 return
-            # Move the token from signature key to token_mint key
-            if signature in self.pending_tokens:
-                old_data = self.pending_tokens.pop(signature)
-            else:
-                old_data = {}
-
-            if token_mint not in self.pending_tokens:
-                self.pending_tokens[token_mint] = {
-                    "first_seen": old_data.get("first_seen", int(time.time())),
-                    "checked": False,
-                    "signatures": {signature},
-                    "owner": token_owner,
-                }
-            else:
-                self.pending_tokens[token_mint]["signatures"].add(signature)
-
             # Check if the token was minted before this transaction
             age = self._get_token_age(token_mint)
 
@@ -120,6 +113,7 @@ class HeliusConnector:
 
             if token_mint in known_tokens:
                 logger.debug(f"⏩ Ignoring known token: {token_mint}")
+                self.cleanup(token_mint)
                 return
 
             if token_mint == "So11111111111111111111111111111111111111112":
@@ -135,7 +129,6 @@ class HeliusConnector:
                 logger.info(
                     f"🚀 LIQUIDITY passed: ${liquidity:.2f} — considering buy for {token_mint}"
                 )
-                self.pending_tokens[token_mint]["checked"] = True
                 known_tokens.add(token_mint)
                 # Simulated BUY (replace this with real buy() when ready)
                 logger.info(f"🧪 [SIM MODE] Would BUY {token_mint} with $25")
@@ -144,6 +137,25 @@ class HeliusConnector:
                 self.excel_utility.save_to_csv(
                     self.excel_utility.TOKENS_DIR,
                     "all_tokens_found.csv",
+                    {
+                        "Timestamp": [f"{date_str} {time_str}"],
+                        "Signature": [signature],
+                        "Token Mint": [token_mint],
+                        "Liquidity (Estimated)": [liquidity],
+                    },
+                )
+                
+                #hit & run check
+                scam_safe = self.solana_manager.check_scam_functions_helius(token_mint)
+                if not scam_safe:
+                    logger.warning(f"❌ Scam check failed — skipping {token_mint}")
+                    self.cleanup(token_mint)
+                    return
+
+                # Save to tokens that woudlve actually triggered buy function
+                self.excel_utility.save_to_csv(
+                    self.excel_utility.TOKENS_DIR,
+                    f"bought_tokens_{date_str}.csv",
                     {
                         "Timestamp": [f"{date_str} {time_str}"],
                         "Signature": [signature],
@@ -177,8 +189,9 @@ class HeliusConnector:
 
             while signature_queue:
                 try:
-                    signature = signature_queue.pop()
+                    signature = signature_queue.popleft()
                     self.fetch_transaction(signature)
+                    time.sleep(random.uniform(0.10, 0.14))
                 except IndexError:
                     logger.warning("⚠️ Attempted to pop from an empty signature queue.")
                     break
@@ -255,17 +268,7 @@ class HeliusConnector:
 
             if not mint_related:
                 logger.debug(f"⛔ Skipping TX: No {self.dex_name} launch indicators found.")
-                return
-
-            # Check for duplicate
-            if signature not in self.pending_tokens:
-                self.pending_tokens[signature] = {
-                    "first_seen": int(time.time()),
-                    "checked": False,
-                    "token_mint": None,
-                    "owner": "N/A",
-                }
-            
+                return            
             if signature in signature_cache:
                 return
             signature_cache.append(signature)
@@ -295,6 +298,29 @@ class HeliusConnector:
                 return
             logger.info(f"✅ Passed Step 3: Unique new token detected: {signature}")
             signature_queue.append(signature)
+            # Step 4: retrive token mint
+            token_mint = self.resolve_token_mint_from_tx(signature)
+            if not token_mint or token_mint == "N/A":
+                logger.warning(f"❌ Token mint not found from TX: {signature}")
+                return
+            logger.info(f"passed step 4 found token address:{token_mint}")
+            signature_to_token_mint[signature] = token_mint
+            
+            # Step 5: Aggressively pre-fetch txs 2–8 related to the mint
+            try:
+                txs = self.get_recent_transactions_for_token(token_mint)[1:8]
+                if txs:
+                    logger.info(f"📦 Found {len(txs)} early txs after mint — pre-queuing...")
+                else:
+                    return
+                for tx_sig in txs:
+                    if tx_sig in signature_cache:
+                        continue
+                    signature_cache.append(tx_sig)
+                    signature_queue.appendleft(tx_sig)
+                    logger.debug(f"🧊 Queued early tx: {tx_sig}")
+            except Exception as e:
+                logger.error(f"❌ Failed to prefetch txs for {signature}: {e}")
 
         except Exception as e:
             logger.error(f"❌ Error processing WebSocket message: {e}", exc_info=True)
@@ -336,59 +362,7 @@ class HeliusConnector:
         except Exception as e:
             logger.error(f"❌ Error fetching token age: {e}")
         return None
-
-    def track_pending_tokens_loop(self):
-        logger.info("🕵️‍♂️ Starting delayed liquidity tracker thread...")
-
-        while True:
-            now = int(time.time())
-
-            for token_mint, info in list(self.pending_tokens.items()):
-                if info.get("checked", False):
-                    continue
-
-                # Remove if over 5 minutes old
-                if now - info["first_seen"] > 300:
-                    logger.info(f"🧹 Removing stale token: {token_mint}")
-                    del self.pending_tokens[token_mint]
-                    continue
-
-                # Wait at least 45 seconds before rechecking
-                if now - info["first_seen"] < 45:
-                    continue
-
-                # Only check once per 60 seconds
-                if "last_checked" in info and now - info["last_checked"] < 60:
-                    continue
-                info["last_checked"] = now
-
-                # Retry cap — 3 attempts per token
-                info.setdefault("retries", 0)
-                info["retries"] += 1
-                if info["retries"] > 3:
-                    logger.info(f"🛑 Max retries reached for {token_mint}, removing.")
-                    del self.pending_tokens[token_mint]
-                    continue
-
-                try:
-                    logger.info(f"🔄 Checking for new TXs for {token_mint}...")
-
-                    tx_signatures = self.get_recent_transactions_for_token(token_mint)
-
-                    for tx_sig in tx_signatures:
-                        if tx_sig in signature_cache:
-                            continue
-
-                        logger.info(f"📬 Queuing TX {tx_sig} for processing...")
-                        signature_cache.append(tx_sig)
-                        signature_queue.append(tx_sig)
-                        break
-
-                except Exception as e:
-                    logger.error(f"❌ Error scanning TXs for {token_mint}: {e}")
-
-            time.sleep(10)
-
+    
     def get_recent_transactions_for_token(self, token_mint: str) -> list[str]:
         try:
             self.token_address_payload["id"] = self.id
@@ -401,7 +375,40 @@ class HeliusConnector:
             )
 
             txs = response.get("result", [])
+            logger.debug(f"pulled transactions:{txs}")
             return [tx.get("signature") for tx in txs if "signature" in tx]
         except Exception as e:
             logger.error(f"❌ Failed to fetch recent TXs for token {token_mint}: {e}")
             return []
+    
+    def resolve_token_mint_from_tx(self, signature: str) -> str | None:
+        try:
+            self.transaction_payload["id"] = self.id
+            self.transaction_payload["params"][0] = signature
+            self.id += 1
+
+            response = self.requests_utility.post(
+                endpoint=self.api_key["API_KEY"], payload=self.transaction_payload
+            )
+
+            balances = response.get("result", {}).get("meta", {}).get("postTokenBalances", [])
+            if balances:
+                return balances[0].get("mint")
+        except Exception as e:
+            logger.error(f"❌ Error resolving mint for TX {signature}: {e}")
+        return None
+
+    def cleanup(self,token_mint):
+        signature_queue_copy = list(signature_queue)
+        signature_queue.clear()
+        for sig in signature_queue_copy:
+            mint = signature_to_token_mint.get(sig)
+            if mint != token_mint:
+                signature_queue.append(sig)
+        removed = 0
+        for sig, mint in list(signature_to_token_mint.items()):
+            if mint == token_mint:
+                signature_to_token_mint.pop(sig, None)
+                removed += 1
+        logger.info(f"🧹 Cleaned up {removed} signatures for token {token_mint}")
+
