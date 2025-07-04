@@ -31,7 +31,7 @@ def validate_bot_settings():
         raise TypeError("SL must be a float")
 
     rl = BOT_SETTINGS.get("RATE_LIMITS", {})
-    for api in ["helius", "JUPITER"]:
+    for api in ["helius", "jupiter"]:
         if api not in rl:
             raise ValueError(f"Missing RATE_LIMITS config for: {api}")
         if not isinstance(rl[api].get("min_interval"), float):
