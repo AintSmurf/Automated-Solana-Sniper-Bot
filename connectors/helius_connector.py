@@ -52,6 +52,7 @@ class HeliusConnector:
         self.dex_name = credentials_utility.get_dex()["DEX"]     
         self.latest_block_time = int(time.time())
         self.trade_count = load_trade_count()
+        self.rpc_call_counter = 0 
         self.last_rpc_log_time = time.time()
         if devnet:
             self.wss_url = HELIUS["LOGS_SOCKET_DEVNET"] + self.api_key["HELIUS_API_KEY"]
