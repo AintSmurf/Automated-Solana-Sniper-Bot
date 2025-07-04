@@ -22,8 +22,9 @@ from utilities.rug_check_utility import RugCheckUtility
 import requests
 from datetime import datetime
 import re
-from helpers.rate_limiter_jupiter import RateLimiter
+from helpers.rate_limiter import RateLimiter
 import time
+from typing import Optional
 
 
 
@@ -31,17 +32,19 @@ import time
 # Set up logger
 logger = LoggingHandler.get_logger()
 special_logger = LoggingHandler.get_special_debug_logger()
-JUPITER_LIMITER = RateLimiter()
+POST_BUY_RETRIES = 2
 
 
 class SolanaHandler:
-    def __init__(self):
+    def __init__(self,rate_limiter: RateLimiter):
         self.helius_requests = RequestsUtility(HELIUS_URL["BASE_URL"])
         credentials_utility = CredentialsUtility()
         self.request_utility = RequestsUtility(RAYDIUM["BASE_URL"])
         self.jupiter_requests = RequestsUtility(JUPITER_STATION["BASE_URL"])
         self.rug_check_utility = RugCheckUtility()
         self.excel_utility = ExcelUtility()
+        self.helius_rate_limiter = rate_limiter
+        self.jupiter_rate_limiter = RateLimiter(min_interval=1.1, jitter_range=(0.05, 0.15))
         self.transaction_simulation_paylod = get_payload("Transaction_simulation")
         self.swap_payload = get_payload("Swap_token_payload")
         self.liquidity_payload = get_payload("Liquidity_payload")
@@ -52,7 +55,7 @@ class SolanaHandler:
         self.api_key = credentials_utility.get_helius_api_key()
         self._private_key_solana = credentials_utility.get_solana_private_wallet_key()
         self.bird_api_key = credentials_utility.get_bird_eye_key()
-        self.url = HELIUS_URL["BASE_URL"] + self.api_key["API_KEY"]
+        self.url = HELIUS_URL["BASE_URL"] + self.api_key["HELIUS_API_KEY"]
         self.client = Client(self.url, timeout=30)
         self.keypair = Keypair.from_base58_string(
             self._private_key_solana["SOLANA_PRIVATE_KEY"]
@@ -180,6 +183,7 @@ class SolanaHandler:
             self.send_transaction_payload["params"][0] = txn_64
             self.send_transaction_payload["id"] = self.id
             self.id += 1
+            self.helius_rate_limiter.wait()
             response = self.helius_requests.post(
                 self.api_key["API_KEY"], payload=self.send_transaction_payload
             )
@@ -261,7 +265,7 @@ class SolanaHandler:
 
     def get_quote(self, input_mint, output_mint, amount=1000, slippage=5):
         try:
-            JUPITER_LIMITER.wait()
+            self.jupiter_rate_limiter.wait()
             quote_url = f"{JUPITER_STATION['QUOTE_ENDPOINT']}?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage}"
             quote_response = self.jupiter_requests.get(quote_url)
 
@@ -284,7 +288,7 @@ class SolanaHandler:
             return None
 
         try:
-            JUPITER_LIMITER.wait()
+            self.jupiter_rate_limiter.wait()
             self.swap_payload["userPublicKey"] = str(self.keypair.pubkey())
             self.swap_payload["quoteResponse"] = quote_response
 
@@ -336,6 +340,7 @@ class SolanaHandler:
         """Simulate a transaction using Helius RPC"""
         self.transaction_simulation_paylod["params"][0] = transaction_base64
         try:
+            self.helius_rate_limiter.wait()
             response = self.helius_requests.post(
                 endpoint=self.api_key["API_KEY"],
                 payload=self.transaction_simulation_paylod,
@@ -462,6 +467,7 @@ class SolanaHandler:
             self.send_transaction_payload["params"][0] = txn_64
             self.send_transaction_payload["id"] = self.id
             self.id += 1
+            self.helius_rate_limiter.wait()
             response = self.helius_requests.post(
                 self.api_key["API_KEY"], payload=self.send_transaction_payload
             )
@@ -673,12 +679,12 @@ class SolanaHandler:
 
     def get_token_prices(self, mints: list) -> dict:
         ids = ",".join(mints)
-        JUPITER_LIMITER.wait()
+        self.jupiter_rate_limiter.wait()
         endpoint = f"{JUPITER_STATION['PRICE']}?ids={ids}&showExtraInfo=true"
         return self.jupiter_requests.get(endpoint)
 
     def get_token_price(self, mint: str) -> float:
-        JUPITER_LIMITER.wait()
+        self.jupiter_rate_limiter.wait()
         endpoint = f"{JUPITER_STATION['PRICE']}?ids={mint}&showExtraInfo=true"
         data = self.jupiter_requests.get(endpoint)
         return data["data"][mint]["price"]
@@ -687,7 +693,7 @@ class SolanaHandler:
         logger.info(f"🔍 Running post-buy safety check for {token_mint}...")
         final_reason = "unknown"
 
-        for attempt in range(4):  # 1 initial + 3 retries
+        for attempt in range(POST_BUY_RETRIES):
             if attempt > 0:
                 logger.info(f"⏳ Rechecking {token_mint} — Attempt {attempt + 1}/4")
                 time.sleep(10)
@@ -761,6 +767,7 @@ class SolanaHandler:
         self.asset_payload["params"]["id"] = token_mint
 
         try:
+            self.helius_rate_limiter.wait()
             response_json = self.helius_requests.post(
                 endpoint=self.api_key["API_KEY"],
                 payload=self.asset_payload,
@@ -827,6 +834,7 @@ class SolanaHandler:
         self.largest_accounts_payload["params"][0] = token_mint
 
         try:
+            self.helius_rate_limiter.wait()
             response_json = self.helius_requests.post(
                 endpoint=self.api_key["API_KEY"],
                 payload=self.largest_accounts_payload,

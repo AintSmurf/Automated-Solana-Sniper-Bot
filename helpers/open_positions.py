@@ -5,16 +5,17 @@ import time
 import os
 from datetime import datetime
 from helpers.solana_manager import SolanaHandler
+from helpers.rate_limiter import RateLimiter
 
 logger = LoggingHandler.get_logger()
 
 
 class OpenPositionTracker:
-    def __init__(self, tp: float, sl: float):
+    def __init__(self, tp: float, sl: float,rate_limiter: RateLimiter):
         self.tp = tp
         self.sl = sl
         self.excel_utility = ExcelUtility()
-        self.solana_manager = SolanaHandler()
+        self.solana_manager = SolanaHandler(rate_limiter)
         self.running = True
         self.base_token = "So11111111111111111111111111111111111111112"
         self.file_path = ""

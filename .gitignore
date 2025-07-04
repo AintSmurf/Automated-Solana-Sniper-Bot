@@ -22,3 +22,4 @@ scripts
 main.py
 missed_token_analysis.csv
 missed_token_analysis_checked.csv
+log_api.py

@@ -30,55 +30,53 @@ You'll need the following before running the bot:
 
 - A funded **Solana wallet**
 - A **Helius API Key** (WebSocket + REST access)
-- *(Optional)* **Jupiter API Key** (for price, swap, quote endpoints)
+- A **Jupiter API key** — price & swaps
+- A **Discord bot token** — for notificationss
 - *(Optional)* **BirdEye API Key** (for liquidity & price fallback)
-- *(Optional)* A **Discord bot token** for alerts
 
 ---
 
 ## ✨ Features
 
-- 🔎 **Real-Time Token Detection**
-  - Detects brand new tokens launched via Raydium or Pump.fun
-  - Pulls logs directly from the Solana blockchain via Helius
+- 🔍 **Real-Time Token Detection**
+  - Captures new tokens via Helius WebSocket
 
-- 🛡️ **Multi-Layered Scam Detection**
+- 📊 **Excel Logging System**  
+  - `all_tokens_found.csv` — Every detected token with liquidity > 1000
+  - `safe_tokens_YYYY-MM-DD.csv` — Tokens that passed full post-buy safety checks
+  - `bought_tokens_YYYY-MM-DD.csv` — Simulated or executed buy transactions  
+  - `scam_tokens_YYYY-MM-DD.csv` — Tokens flagged as scam/risky after checks
+
+- 🛡️ **Scam Protection**
   - Mint/freeze authority audit
-  - Honeypot prevention via Jupiter route validation
-  - High tax & suspicious price ratio checks
-  - Liquidity presence via logs + Birdeye fallback
-  - Largest holders & bot-wallet clustering detection
+  - Honeypot & zero-liquidity protection
+  - Tax check and centralized holder detection
+  - Rug-pull risk detection (LP lock, mutability)
 
-- 💸 **Trade Execution via Jupiter**
-  - Full buy/sell flow using Jupiter’s swap API
-  - Sends raw signed base64 transactions to Helius
-  - Auto-fills token accounts if missing
+- 💰 **Automated Trading**
+  - Buy/sell via Jupiter using signed base64 transactions
+  - Handles associated token accounts automatically
 
 - 📈 **Post-Buy Monitoring**
-  - Optional safety re-check (LP lock, scam, holders)
-  - Simulates 4 rounds of retry if uncertain
-  - CSV logs for tracking safe vs scam token outcomes
+  - Retry safety checks (e.g., LP unlock, holder dist.)
+  - Live tracking of token price vs entry price (TP/SL)
 
-- 🧾 **Modular Excel-Based Logging**
-  - `all_tokens_found.csv` — all detected tokens
-  - `safe_tokens_<date>.csv` — tokens that passed post-buy safety
-  - `scam_tokens_<date>.csv` — tokens flagged as risky
-  - `bought_tokens_<date>.csv` — all simulated/real trades
+- 🧾 **Logging & Reporting**
+  - CSV-based history for all trades and safety evaluations
 
-- 💬 **Optional Discord Integration**
-  - Sends alerts for safe tokens
-  - Includes price, liquidity, and token metadata
+- 💬 **Optional Discord Alerts**
+  - Sends safe token alerts + price + metadata
 
-- 🧵 **Threaded Architecture**
-  - WebSocket listener, transaction fetcher, delayed liquidity checker, and Discord bot all run independently for performance
+- 🧵 **Threaded Execution**
+  - WebSocket, transaction fetcher, position_tracker, and Discord bot run concurrently
 
 ---
 
 ## ⚙️ Requirements
 
 - Python 3.8+
-- `solana`, `solders`, `pandas`, `requests`, `websocket-client`, `python-dotenv`, etc.
-- Dependencies listed in `requirements.txt`
+- Key packages:  
+  `solana`, `solders`, `pandas`, `requests`, `websocket-client`
 
 ---
 
@@ -109,12 +107,11 @@ pip install -r requirements.txt
 
 ### 4. Configure your credentials
 
-Edit or export these values in `.env` or credentials utility script:
+Edit or export these values in `credentials` or credentials utility script:
 
 ```env
-API_KEY=your_helius_api_key
+HELIUS_API_KEY=your_helius_api_key
 SOLANA_PRIVATE_KEY=your_base58_private_key
-JUPITER_API_KEY=your_jupiter_api_key (optional)
 BIRD_EYE_API_KEY=your_birdeye_key (optional)
 DISCORD_TOKEN=your_discord_bot_token (optional)
 DEX="Pumpfun" or "Raydium"
@@ -122,7 +119,7 @@ DEX="Pumpfun" or "Raydium"
 
 Linux/macOS:
 ```bash
-sh Credentials.sh
+source Credentials.sh
 ```
 
 Windows:
@@ -141,10 +138,27 @@ python app.py
 This will launch:
 - WebSocket listener
 - Transaction fetcher
-- Position tracker (TP/SL monitor)
+- Position monitor (TP/SL)
 - Discord bot (if configured)
-
 ---
+## 🧱 Docker Setup (Optional)
+- You can run the bot inside Docker using the provided **Dockerfile.bot**
+  - Step 1: Make sure credential.sh configured
+    ```env
+    HELIUS_API_KEY=your_helius_api_key
+    SOLANA_PRIVATE_KEY=your_base58_private_key
+    BIRD_EYE_API_KEY=your_birdeye_key (optional)
+    DISCORD_TOKEN=your_discord_bot_token (optional)
+    DEX="Pumpfun" or "Raydium"
+    ```
+    - Step 2: Build the Docker image
+    ```bash
+    docker build -f Dockerfile.bot -t solana-sniper-bot
+    ```
+    - Step 3: Run the bot inside Docker
+    ```bash
+    docker run solana-sniper-bot
+    ```
 
 ## 🛃️ Roadmap
 
@@ -152,12 +166,12 @@ This will launch:
 |--------|--------|
 | ✅ Real-Time Detection via WebSocket | Completed |
 | ✅ Anti-Scam Filtering | Completed |
-| ✅ Buy/Sell via Jupiter | Implemented (testing phase) |
-| ↺ Auto Buy Mode | Planned |
+| ✅ Buy/Sell via Jupiter | ✅ Testing |
+| ↺ Auto Buy Mode | ✅ Testing |
 | 📲 Telegram Notifications | Planned |
 | 📝 SQLite Logging (instead of CSV) | Planned |
-| 💻 Web Dashboard / Windows GUI | Under testing |
-| 🔐 Blacklist/Whitelist Filters | Planned |
+| 💻 Web Dashboard / Windows GUI | Planned |
+| 🔐 Blacklist/Whitelist Filters | ✅ Testing  |
 ---
 
 ## 📁 Log Management

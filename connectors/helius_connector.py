@@ -15,6 +15,7 @@ from utilities.rug_check_utility import RugCheckUtility
 import threading
 from config.dex_detection_rules import DEX_DETECTION_RULES
 import random
+from helpers.rate_limiter import RateLimiter
 
 
 
@@ -32,27 +33,27 @@ signature_to_token_mint = {}
 latest_block_time = int(time.time())
 known_tokens = set()
 MAX_TOKEN_AGE_SECONDS = 180
-MIN_TOKEN_LIQUIDITY = 1000
+MIN_TOKEN_LIQUIDITY = 1500
 
 
 class HeliusConnector:
-    def __init__(self, devnet=False, API=None):
+    def __init__(self, devnet=False,rate_limiter=None, API=None):
+        self.helius_rate_limiter = rate_limiter if rate_limiter else RateLimiter(min_interval=0.1, jitter_range=(0.01, 0.02))
         logger.info("Initializing Helius WebSocket connection...")
         credentials_utility = CredentialsUtility()
         self.rug_utility = RugCheckUtility()
         self.excel_utility = ExcelUtility()
-        self.solana_manager = SolanaHandler()
+        self.solana_manager = SolanaHandler(rate_limiter=self.helius_rate_limiter)
         self.requests_utility = RequestsUtility(HELIUS_URL["BASE_URL"])
         self.api_key = credentials_utility.get_helius_api_key()
-        self.dex_name = credentials_utility.get_dex()["DEX"]
+        self.dex_name = credentials_utility.get_dex()["DEX"]     
         self.latest_block_time = int(time.time())
         self.rpc_call_counter = 0
         self.last_rpc_log_time = time.time()
         if devnet:
-            self.wss_url = HELIUS["LOGS_SOCKET_DEVNET"] + self.api_key["API_KEY"]
+            self.wss_url = HELIUS["LOGS_SOCKET_DEVNET"] + self.api_key["HELIUS_API_KEY"]
         else:
-            self.wss_url = HELIUS["LOGS_SOCKET_MAINNET"] + self.api_key["API_KEY"]
-
+            self.wss_url = HELIUS["LOGS_SOCKET_MAINNET"] + self.api_key["HELIUS_API_KEY"]
         logger.info(self.wss_url)
         self.prepare_files()
         self.id = 1
@@ -74,6 +75,7 @@ class HeliusConnector:
             self.id += 1
 
             try:
+                self.helius_rate_limiter.wait()
                 tx_data = self.requests_utility.post(
                     endpoint=self.api_key["API_KEY"], payload=self.transaction_payload
                 )
@@ -176,7 +178,6 @@ class HeliusConnector:
     def run_transaction_fetcher(self):
         while True:
             if not signature_queue:
-                time.sleep(2)
                 continue
 
             logger.info(
@@ -192,9 +193,8 @@ class HeliusConnector:
                     else:
                         signature = item
                         tx_data = None
-
+                    self.helius_rate_limiter.wait()
                     self.fetch_transaction(signature, tx_data)
-                    time.sleep(random.uniform(0.10, 0.14))
                 except IndexError:
                     logger.warning("⚠️ Attempted to pop from an empty signature queue.")
                     break
@@ -350,6 +350,7 @@ class HeliusConnector:
     def get_latest_slot(self):
         self.lastest_slot_paylaod["id"] = self.id
         self.id += 1
+        self.helius_rate_limiter.wait()
         response = self.requests_utility.post(
             endpoint=self.api_key["API_KEY"], payload=self.lastest_slot_paylaod
         )
@@ -363,7 +364,7 @@ class HeliusConnector:
             self.token_address_payload["id"] = self.id
             self.id += 1
             self.token_address_payload["params"][0] = mint_address
-
+            self.helius_rate_limiter.wait()
             response = self.requests_utility.post(
                 endpoint=self.api_key["API_KEY"],
                 payload=self.token_address_payload
@@ -382,7 +383,7 @@ class HeliusConnector:
             self.token_address_payload["id"] = self.id
             self.id += 1
             self.token_address_payload["params"][0] = token_mint
-
+            self.helius_rate_limiter.wait()
             response = self.requests_utility.post(
                 endpoint=self.api_key["API_KEY"],
                 payload=self.token_address_payload
@@ -402,7 +403,7 @@ class HeliusConnector:
             self.transaction_payload["id"] = self.id
             self.transaction_payload["params"][0] = signature
             self.id += 1
-
+            self.helius_rate_limiter.wait()
             response = self.requests_utility.post(
                 endpoint=self.api_key["API_KEY"], payload=self.transaction_payload
             )

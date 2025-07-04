@@ -1,0 +1,27 @@
+# Dockerfile.bot
+
+FROM python:3.10-slim
+
+# System dependencies
+RUN apt update -y && \
+    apt install -y python3-venv gcc libssl-dev libffi-dev curl bash && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy requirements and credential script first (for caching)
+COPY requirements.txt ./
+COPY local_credential.sh ./
+
+# Install Python dependencies
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# Copy the rest of the source code
+COPY . .
+
+# Make credential script executable (optional but clean)
+RUN chmod +x Credentials.sh
+
+# Run: source credentials and start the bot
+CMD ["/bin/bash", "-c", "source ./local_credential.sh && python3 -u app.py"]
