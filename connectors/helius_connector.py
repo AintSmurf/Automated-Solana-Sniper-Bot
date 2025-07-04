@@ -43,7 +43,7 @@ class HeliusConnector:
         credentials_utility = CredentialsUtility()
         self.rug_utility = RugCheckUtility()
         self.excel_utility = ExcelUtility()
-        self.solana_manager = SolanaHandler(rate_limiter=self.helius_rate_limiter)
+        self.solana_manager = SolanaHandler(self.helius_rate_limiter)
         self.requests_utility = RequestsUtility(HELIUS_URL["BASE_URL"])
         self.api_key = credentials_utility.get_helius_api_key()
         self.dex_name = credentials_utility.get_dex()["DEX"]     
@@ -77,7 +77,7 @@ class HeliusConnector:
             try:
                 self.helius_rate_limiter.wait()
                 tx_data = self.requests_utility.post(
-                    endpoint=self.api_key["API_KEY"], payload=self.transaction_payload
+                    endpoint=self.api_key["HELIUS_API_KEY"], payload=self.transaction_payload
                 )
                 self.rpc_call_counter += 1
                 self._log_rpc_usage()
@@ -352,7 +352,7 @@ class HeliusConnector:
         self.id += 1
         self.helius_rate_limiter.wait()
         response = self.requests_utility.post(
-            endpoint=self.api_key["API_KEY"], payload=self.lastest_slot_paylaod
+            endpoint=self.api_key["HELIUS_API_KEY"], payload=self.lastest_slot_paylaod
         )
         self.rpc_call_counter += 1
         self._log_rpc_usage()
@@ -366,7 +366,7 @@ class HeliusConnector:
             self.token_address_payload["params"][0] = mint_address
             self.helius_rate_limiter.wait()
             response = self.requests_utility.post(
-                endpoint=self.api_key["API_KEY"],
+                endpoint=self.api_key["HELIUS_API_KEY"],
                 payload=self.token_address_payload
             )
 
@@ -385,7 +385,7 @@ class HeliusConnector:
             self.token_address_payload["params"][0] = token_mint
             self.helius_rate_limiter.wait()
             response = self.requests_utility.post(
-                endpoint=self.api_key["API_KEY"],
+                endpoint=self.api_key["HELIUS_API_KEY"],
                 payload=self.token_address_payload
             )
 
@@ -405,7 +405,7 @@ class HeliusConnector:
             self.id += 1
             self.helius_rate_limiter.wait()
             response = self.requests_utility.post(
-                endpoint=self.api_key["API_KEY"], payload=self.transaction_payload
+                endpoint=self.api_key["HELIUS_API_KEY"], payload=self.transaction_payload
             )
             self.rpc_call_counter += 1
             self._log_rpc_usage()

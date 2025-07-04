@@ -185,7 +185,7 @@ class SolanaHandler:
             self.id += 1
             self.helius_rate_limiter.wait()
             response = self.helius_requests.post(
-                self.api_key["API_KEY"], payload=self.send_transaction_payload
+                self.api_key["HELIUS_API_KEY"], payload=self.send_transaction_payload
             )
             logger.debug(f" buy response {response}")
             # adjust key if needed
@@ -342,7 +342,7 @@ class SolanaHandler:
         try:
             self.helius_rate_limiter.wait()
             response = self.helius_requests.post(
-                endpoint=self.api_key["API_KEY"],
+                endpoint=self.api_key["HELIUS_API_KEY"],
                 payload=self.transaction_simulation_paylod,
             )
             logger.debug(f"Transaction Simulation Response: {response}")
@@ -469,7 +469,7 @@ class SolanaHandler:
             self.id += 1
             self.helius_rate_limiter.wait()
             response = self.helius_requests.post(
-                self.api_key["API_KEY"], payload=self.send_transaction_payload
+                self.api_key["HELIUS_API_KEY"], payload=self.send_transaction_payload
             )
             logger.info(f"✅ Sell order completed: {response}")
         except Exception as e:
@@ -769,7 +769,7 @@ class SolanaHandler:
         try:
             self.helius_rate_limiter.wait()
             response_json = self.helius_requests.post(
-                endpoint=self.api_key["API_KEY"],
+                endpoint=self.api_key["HELIUS_API_KEY"],
                 payload=self.asset_payload,
             )
             special_logger.debug(f"🔍 Raw Helius Response for {response_json}")
@@ -836,7 +836,7 @@ class SolanaHandler:
         try:
             self.helius_rate_limiter.wait()
             response_json = self.helius_requests.post(
-                endpoint=self.api_key["API_KEY"],
+                endpoint=self.api_key["HELIUS_API_KEY"],
                 payload=self.largest_accounts_payload,
             )
 

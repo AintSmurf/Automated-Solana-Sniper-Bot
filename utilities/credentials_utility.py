@@ -13,7 +13,7 @@ class CredentialsUtility:
 
     def get_helius_api_key(self):
         logger.info("retriving helius api key ...")
-        self.api_key = os.environ["API_KEY"]
+        self.api_key = os.environ["HELIUS_API_KEY"]
         return {"HELIUS_API_KEY": self.api_key}
 
     def get_solana_private_wallet_key(self):
