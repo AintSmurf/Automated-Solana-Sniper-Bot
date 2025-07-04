@@ -5,8 +5,9 @@ from helpers.logging_manager import LoggingHandler
 import threading
 import time
 from helpers.open_positions import OpenPositionTracker
-from helpers.open_positions import OpenPositionTracker
 from helpers.rate_limiter import RateLimiter
+from config.bot_settings import BOT_SETTINGS
+from helpers.framework_manager import validate_bot_settings
 
 # set up logger
 logger = LoggingHandler.get_logger()
@@ -17,33 +18,43 @@ def start_discord_bot():
     asyncio.run(ds.run())
 
 def main():
-    
-    shared_helius_limiter = RateLimiter(min_interval=0.1, jitter_range=(0.01, 0.02))
+    # Use shared rate limiter from config
+    helius_rl_settings = BOT_SETTINGS["RATE_LIMITS"]["helius"]
+    shared_helius_limiter = RateLimiter(
+        min_interval=helius_rl_settings["min_interval"],
+        jitter_range=helius_rl_settings["jitter_range"]
+    )
+
+    # Init components with config values
     helius_connector = HeliusConnector(rate_limiter=shared_helius_limiter)
-    tracker = OpenPositionTracker(1.3, 0.85,shared_helius_limiter)
 
+    tracker = OpenPositionTracker(
+        tp=BOT_SETTINGS["TP"],
+        sl=BOT_SETTINGS["SL"],
+        rate_limiter=shared_helius_limiter
+    )
 
-    ws_thread = threading.Thread(target=helius_connector.start_ws, daemon=True)
-    ws_thread.start()
+    # Launch threads
+    threading.Thread(target=helius_connector.start_ws, daemon=True).start()
     logger.info("🚀 WebSocket Started")
 
-    fetcher_thread = threading.Thread(
-        target=helius_connector.run_transaction_fetcher, daemon=True
-    )
-    fetcher_thread.start()
+    threading.Thread(target=helius_connector.run_transaction_fetcher, daemon=True).start()
     logger.info("✅ Transaction fetcher started")
 
-    trakcer_thread = threading.Thread(target=tracker.track_positions, daemon=True)
-    trakcer_thread.start()
+    threading.Thread(target=tracker.track_positions, daemon=True).start()
     logger.info("✅ Position tracker started")
 
-    discord_thread = threading.Thread(target=start_discord_bot, daemon=True)
-    discord_thread.start()
+    threading.Thread(target=start_discord_bot, daemon=True).start()
     logger.info("✅ Discord bot (with Excel watcher) started in a separate thread")
 
+    # Keep main thread alive
     while True:
         time.sleep(1)
 
-
 if __name__ == "__main__":
-    main()
+    try:
+        validate_bot_settings()
+        main()
+    except Exception as e:
+        logger.error(f"❌ BOT_SETTINGS validation failed: {e}")
+        exit(1)

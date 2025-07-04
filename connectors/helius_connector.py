@@ -14,8 +14,9 @@ from collections import deque
 from utilities.rug_check_utility import RugCheckUtility
 import threading
 from config.dex_detection_rules import DEX_DETECTION_RULES
-import random
-from helpers.rate_limiter import RateLimiter
+from config.bot_settings import BOT_SETTINGS
+from helpers.framework_manager import load_trade_count,save_trade_count
+
 
 
 
@@ -32,13 +33,15 @@ signature_to_token_mint = {}
 
 latest_block_time = int(time.time())
 known_tokens = set()
-MAX_TOKEN_AGE_SECONDS = 180
-MIN_TOKEN_LIQUIDITY = 1500
+MAX_TOKEN_AGE_SECONDS = BOT_SETTINGS["MAX_TOKEN_AGE_SECONDS"]
+MIN_TOKEN_LIQUIDITY = BOT_SETTINGS["MIN_TOKEN_LIQUIDITY"]
+MAXIMUX_TRADES =BOT_SETTINGS["MAXIMUX_TRADES"]
+TRADE_AMOUNT=BOT_SETTINGS["TRADE_AMOUNT"]
 
 
 class HeliusConnector:
     def __init__(self, devnet=False,rate_limiter=None, API=None):
-        self.helius_rate_limiter = rate_limiter if rate_limiter else RateLimiter(min_interval=0.1, jitter_range=(0.01, 0.02))
+        self.helius_rate_limiter = rate_limiter 
         logger.info("Initializing Helius WebSocket connection...")
         credentials_utility = CredentialsUtility()
         self.rug_utility = RugCheckUtility()
@@ -48,7 +51,7 @@ class HeliusConnector:
         self.api_key = credentials_utility.get_helius_api_key()
         self.dex_name = credentials_utility.get_dex()["DEX"]     
         self.latest_block_time = int(time.time())
-        self.rpc_call_counter = 0
+        self.trade_count = load_trade_count()
         self.last_rpc_log_time = time.time()
         if devnet:
             self.wss_url = HELIUS["LOGS_SOCKET_DEVNET"] + self.api_key["HELIUS_API_KEY"]
@@ -147,7 +150,12 @@ class HeliusConnector:
                     logger.warning(f"❌ Scam check failed — skipping {token_mint}")
                     self.cleanup(token_mint)
                     return
-
+                if self.trade_count < MAXIMUX_TRADES:
+                    self.solana_manager.buy("So11111111111111111111111111111111111111112", token_mint, TRADE_AMOUNT)
+                    self.trade_count += 1
+                    save_trade_count(self.trade_count)
+                else:
+                    logger.info(f"⚠️ Max trades reached ({MAXIMUX_TRADES}) — skipping buy.")
                 self.excel_utility.save_to_csv(
                     self.excel_utility.TOKENS_DIR,
                     f"bought_tokens_{date_str}.csv",

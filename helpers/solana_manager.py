@@ -24,7 +24,7 @@ from datetime import datetime
 import re
 from helpers.rate_limiter import RateLimiter
 import time
-from typing import Optional
+from config.bot_settings import BOT_SETTINGS
 
 
 
@@ -44,7 +44,8 @@ class SolanaHandler:
         self.rug_check_utility = RugCheckUtility()
         self.excel_utility = ExcelUtility()
         self.helius_rate_limiter = rate_limiter
-        self.jupiter_rate_limiter = RateLimiter(min_interval=1.1, jitter_range=(0.05, 0.15))
+        jupiter_rl_settings = BOT_SETTINGS["RATE_LIMITS"]["jupiter"]
+        self.jupiter_rate_limiter = RateLimiter(min_interval=jupiter_rl_settings["min_interval"],jitter_range=jupiter_rl_settings["jitter_range"])
         self.transaction_simulation_paylod = get_payload("Transaction_simulation")
         self.swap_payload = get_payload("Swap_token_payload")
         self.liquidity_payload = get_payload("Liquidity_payload")
