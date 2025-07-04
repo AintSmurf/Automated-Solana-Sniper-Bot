@@ -41,8 +41,8 @@ def main():
     threading.Thread(target=helius_connector.run_transaction_fetcher, daemon=True).start()
     logger.info("✅ Transaction fetcher started")
 
-    threading.Thread(target=tracker.track_positions, daemon=True).start()
-    logger.info("✅ Position tracker started")
+    # threading.Thread(target=tracker.track_positions, daemon=True).start()
+    # logger.info("✅ Position tracker started")
 
     threading.Thread(target=start_discord_bot, daemon=True).start()
     logger.info("✅ Discord bot (with Excel watcher) started in a separate thread")
