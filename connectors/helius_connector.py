@@ -130,10 +130,7 @@ class HeliusConnector:
             market_cap = "N/A"
 
             if liquidity > MIN_TOKEN_LIQUIDITY:
-                logger.info(f"🚀 LIQUIDITY passed: ${liquidity:.2f} — considering buy for {token_mint}")
                 known_tokens.add(token_mint)
-                logger.info(f"🧪 [SIM MODE] Would BUY {token_mint} with $25")
-
                 self.excel_utility.save_to_csv(
                     self.excel_utility.TOKENS_DIR,
                     "all_tokens_found.csv",
@@ -161,6 +158,8 @@ class HeliusConnector:
                         "Liquidity (Estimated)": [liquidity],
                     },
                 )
+                logger.info(f"🚀 LIQUIDITY passed: ${liquidity:.2f} — considering buy for {token_mint} transaction signature:{signature}")
+                logger.info(f"🧪 [SIM MODE] Would BUY {token_mint} with $25")
                 elapsed = time.time() - start_time
                 logger.info(f"⏱️ Finished processing {signature} in {elapsed:.2f}s")
                 threading.Thread(
@@ -258,7 +257,7 @@ class HeliusConnector:
                     )
             else:
                 logger.debug(f"⚠️ TX failed with non-custom error: {error}")
-
+            logger.debug(f"🔍 Raw logs for {signature}: {logs}")
             detection_rules = DEX_DETECTION_RULES.get(self.dex_name, [])
             mint_related = any(
                 any(rule in log for rule in detection_rules)
@@ -270,9 +269,8 @@ class HeliusConnector:
                 return
             if signature in signature_cache:
                 return
-            signature_cache.append(signature)
-
-            logger.info("✅ Passed Step 1: Mint instruction found.")
+            signature_cache.append(signature)  
+            logger.info(f"✅ Passed Step 1: Mint instruction found in {signature}.")
 
             # Step 2: Check if the transaction is recent
             current_time = int(time.time())
@@ -295,9 +293,10 @@ class HeliusConnector:
             if signature in signature_queue:
                 logger.debug(f"⏩ Ignoring duplicate signature from queue: {signature}")
                 return
-            logger.info(f"✅ Passed Step 3: Unique new token detected: {signature}")
+            logger.info(f"✅ Passed Step 3: Unique new token detected:{signature}")
 
             # Step 4: Fetch transaction data (just once)
+            logger.info(f"📤 Fetching first TX data for {signature}")
             tx_data = self.get_transaction_data(signature)
             if not tx_data:
                 logger.warning(f"❌ Could not fetch transaction data for: {signature}")
@@ -307,15 +306,23 @@ class HeliusConnector:
             if not post_token_balances:
                 logger.warning(f"❌ Token mint not found in transaction: {signature}")
                 return
+            
+            # 🧪 Analyze token mints
+            mints = [b.get("mint") for b in post_token_balances if b.get("mint")]
+            unique_mints = list(set(mints))
 
+            logger.debug(f"🔍 Mints found in transaction: {mints}")
+            logger.info(f"🔢 Unique token mints in TX {signature}: {len(unique_mints)}")
+            
             token_mint = post_token_balances[0].get("mint", "N/A")
             if token_mint == "N/A" or token_mint is None:
                 logger.warning(f"❌ Invalid token mint from TX: {signature}")
                 return
-
+            logger.debug(f"🪙 postTokenBalances for {signature}: {post_token_balances}")
             logger.info(f"✅ Passed Step 4: Found token address: {token_mint}")
             # Step 5: Add to queue with tx_data and save temporary for later to use the token address
             signature_to_token_mint[signature] = token_mint
+            logger.debug(f"🧭 Mapped Signature → Mint: {signature} → {token_mint}")
             signature_queue.append((signature, tx_data))
 
             # Step 6: Prefetch recent txs for the same token
