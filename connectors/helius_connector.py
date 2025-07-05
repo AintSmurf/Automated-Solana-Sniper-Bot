@@ -16,6 +16,7 @@ import threading
 from config.dex_detection_rules import DEX_DETECTION_RULES
 from config.bot_settings import BOT_SETTINGS
 from helpers.framework_manager import load_trade_count,save_trade_count
+from config.blacklist import BLACK_LIST
 
 
 
@@ -100,7 +101,9 @@ class HeliusConnector:
 
             token_mint = post_token_balances[0]["mint"]
             token_owner = post_token_balances[0].get("owner", "N/A")
-
+            if token_mint in BLACK_LIST:
+                logger.info(f"⛔ Token {token_mint} is blacklisted — skipping.")
+                return
             if token_mint in [None, "N/A"]:
                 logger.warning(f"⚠️ Invalid token mint for TX {signature}")
                 return
