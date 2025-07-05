@@ -63,9 +63,11 @@ class OpenPositionTracker:
 
                     take_profit_price = buy_price_per_token * self.tp
                     stop_loss_price = buy_price_per_token * self.sl
+                    change = ((current_price - buy_price_per_token) / buy_price_per_token) * 100
+
 
                     logger.info(
-                        f"🔎 Tracking {token_mint[:4]}... Current: {current_price:.8f}, Buy: {buy_price_per_token:.8f}"
+                        f"🔎 Tracking {token_mint}... Current: {current_price:.10f}, Buy: {buy_price_per_token:.10f}, change: {change:.2f}%"
                     )
 
                     if current_price >= take_profit_price:

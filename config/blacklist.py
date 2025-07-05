@@ -7,5 +7,6 @@ BLACK_LIST = {
   "Fd7baMeN6F8h1HZCyAYeCccHr7p6iGmTzY4b1HByoYuh",  # TEMAYIN
   "G7VgkZuf3CAokUsKyGoQyrPyjZ8fsK6U9ydsZwFaEAX9",  # ye
   "GXtfShnAS5C2gCkC5Pe8KzEy4fhprxUNbPPZ65KXgBCdG"  # URANUS
+  "FV6Xcw9K5GZRb2jDN7e6xXgzs4ZDgJM1BE6nWRqRbonk",  #Air Coin (空气币)
 }
 

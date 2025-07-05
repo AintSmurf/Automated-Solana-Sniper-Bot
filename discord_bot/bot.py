@@ -46,23 +46,22 @@ class Discord_Bot:
 
         if choice == 1:
             message = (
-                f"🚨 **Potential Rug Detected!** 🚨\n"
+                f"🚨 **passed first test** 🚨\n"
                 f"🔹 **Mint Address:** `{token_mint}`\n"
                 f"🔹 **Owner:** `{token_owner}`\n"
                 f"🔹 **Liquidity:** `{liquidity}`\n"
                 f"🔹 **Market Cap:** `{market_cap}`\n"
                 f"🔹 **[DexScreener Link]({dexscreener_link})**\n"
-                f"⚠️ **Warning: This token failed a security check!**"
+                f"⚠️ **Warning: This token didnt pass yet the rest of the tests**"
             )
         else:
             message = (
-                f"🚀 **New Token Passed Transaction Check!** 🚀\n"
+                f"🚀 **New Token Passed all tests** 🚀\n"
                 f"🔹 **Mint Address:** `{token_mint}`\n"
                 f"🔹 **Owner:** `{token_owner}`\n"
                 f"🔹 **Liquidity (Estimated):** `{liquidity}`\n"
                 f"🔹 **Market Cap:** `{market_cap}`\n"
                 f"🔹 **[DexScreener Link]({dexscreener_link})**\n"
-                f"✅ **Not a Honeypot!**"
             )
 
         await self.send_message_to_discord("solana_tokens", message)
@@ -74,7 +73,7 @@ class Discord_Bot:
             date_str = now.strftime("%Y-%m-%d")
             rug_check_file = f"bought_tokens_{date_str}.csv"
             await self.check_and_send_new_entries(
-                self.excel_utility.TOKENS_DIR, rug_check_file, 1
+                self.excel_utility.BOUGHT_TOKENS, rug_check_file, 1
             )
 
             await asyncio.sleep(5)

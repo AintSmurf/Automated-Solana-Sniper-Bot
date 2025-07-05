@@ -9,7 +9,7 @@ BOT_SETTINGS = {
     "TRADE_AMOUNT": 10,
     
     #MAXIMUM TRADES
-    "MAXIMUM_TRADES": 15,
+    "MAXIMUM_TRADES": 20,
 
     # flag for toggling real vs simulated trading 
     "SIM_MODE": False,
