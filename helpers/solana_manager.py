@@ -179,7 +179,7 @@ class SolanaHandler:
             token_amount = self.get_solana_token_worth_in_dollars(usd_amount)
             quote = self.get_quote(input_mint, output_mint, token_amount)
             price_per_token = usd_amount / float(quote["outAmount"])
-            logger.info("token prince: ", price_per_token)
+            logger.info(f"📈 Token price: {price_per_token}")
             txn_64 = self.get_swap_transaction(quote)
             self.send_transaction_payload["params"][0] = txn_64
             self.send_transaction_payload["id"] = self.id
@@ -203,11 +203,12 @@ class SolanaHandler:
                     "Timestamp": [f"{date_str} {time_str}"],
                     "Token_price": [token_price],
                     "Token_sold": [input_mint],
-                    "Token bought": [output_mint],
+                    "Token_bought": [output_mint],
                     "amount": [token_amount],
                     "USD": [usd_amount],
                     "type": "BUY",
                     "Sold_At_Price": "",
+                    "SentToDiscord": [False],
                 },
             )
             return response["result"]
@@ -444,7 +445,7 @@ class SolanaHandler:
 
     def sell(self, input_mint: str, output_mint: str, usd_amount: int = None) -> None:
         logger.info(
-            f"🔄 Initiating sell order\nToken Sold: {input_mint}\nToken Received: {output_mint}"
+            f"🔄 Initiating sell order, Token Sold: {input_mint}, Token Received: {output_mint}"
         )
         try:
             token_balances = self.get_account_balances()
@@ -472,7 +473,12 @@ class SolanaHandler:
             response = self.helius_requests.post(
                 self.api_key["HELIUS_API_KEY"], payload=self.send_transaction_payload
             )
-            logger.info(f"✅ Sell order completed: {response}")
+            if "error" in response:
+                logger.error(f"❌ Sell failed: {response['error']}")
+            else:
+                logger.info(f"✅ Sell order completed: token {input_mint}")
+                logger.debug(f"✅ Sell order completed: {response}")
+            return response.get("result")
         except Exception as e:
             logger.error(f"❌ Failed to place sell order: {e}")
 

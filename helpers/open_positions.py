@@ -28,60 +28,67 @@ class OpenPositionTracker:
         filename = f"bought_tokens_{date_str}.csv"
         self.file_path = os.path.join(self.excel_utility.BOUGHT_TOKENS, filename)
         while self.running:
-            if os.path.exists(self.file_path):
-                try:
-                    df = pd.read_csv(self.file_path)
-                    df = df[df["type"] == "BUY"]
+            if not os.path.exists(self.file_path):
+                logger.debug("📭 Waiting for buy file to be created...")
+                time.sleep(1)
+                continue
+            
+            try:
+                df = pd.read_csv(self.file_path)
+                if df.empty:
+                    logger.info("📭 No open positions to track.")
+                    time.sleep(5)
+                    continue
+                required_columns = {"Token_bought", "Token_sold", "Token_price", "type"}
+                if not required_columns.issubset(df.columns):
+                    logger.info("📄 File exists but missing expected columns — waiting...")
+                    time.sleep(1)
+                    continue
 
-                    if df.empty:
-                        logger.info("📭 No open positions to track.")
-                        time.sleep(5)
+                df = df[df["type"] == "BUY"]
+                mints = df["Token_bought"].tolist() + [self.base_token]
+                price_data = self.solana_manager.get_token_prices(mints)["data"]
+                logger.debug(f"price data:{price_data}")
+
+                for idx, row in df.iterrows():
+                    token_mint = row["Token_bought"]
+                    input_mint = row["Token_sold"]
+                    buy_price_per_token = float(row["Token_price"])
+
+                    if token_mint not in price_data or input_mint not in price_data:
+                        logger.warning(f"⚠️ Missing price data for {token_mint}")
                         continue
 
-                    mints = df["Token bought"].tolist() + [self.base_token]
-                    price_data = self.solana_manager.get_token_prices(mints)["data"]
-                    logger.debug(f"price data:{price_data}")
+                    current_price = float(price_data[token_mint]["price"])
 
-                    for idx, row in df.iterrows():
-                        token_mint = row["Token bought"]
-                        input_mint = row["Token_sold"]
-                        buy_price_per_token = float(row["Token_price"])
+                    take_profit_price = buy_price_per_token * self.tp
+                    stop_loss_price = buy_price_per_token * self.sl
 
-                        if token_mint not in price_data or input_mint not in price_data:
-                            logger.warning(f"⚠️ Missing price data for {token_mint}")
-                            continue
+                    logger.info(
+                        f"🔎 Tracking {token_mint[:4]}... Current: {current_price:.8f}, Buy: {buy_price_per_token:.8f}"
+                    )
 
-                        current_price = float(price_data[token_mint]["price"])
-
-                        take_profit_price = buy_price_per_token * self.tp
-                        stop_loss_price = buy_price_per_token * self.sl
-
+                    if current_price >= take_profit_price:
                         logger.info(
-                            f"🔎 Tracking {token_mint[:4]}... Current: {current_price:.8f}, Buy: {buy_price_per_token:.8f}"
+                            f"🎯 TAKE PROFIT triggered for {token_mint}! Selling..."
                         )
+                        self.sell_and_update(
+                            df, idx, token_mint, input_mint, current_price
+                        )
+                        continue
 
-                        if current_price >= take_profit_price:
-                            logger.info(
-                                f"🎯 TAKE PROFIT triggered for {token_mint}! Selling..."
-                            )
-                            self.sell_and_update(
-                                df, idx, token_mint, input_mint, current_price
-                            )
-                            continue
+                    if current_price <= stop_loss_price:
+                        logger.info(
+                            f"🚨 STOP LOSS triggered for {token_mint}! Selling..."
+                        )
+                        self.sell_and_update(
+                            df, idx, token_mint, input_mint, current_price
+                        )
+                        continue
 
-                        if current_price <= stop_loss_price:
-                            logger.info(
-                                f"🚨 STOP LOSS triggered for {token_mint}! Selling..."
-                            )
-                            self.sell_and_update(
-                                df, idx, token_mint, input_mint, current_price
-                            )
-                            continue
+            except Exception as e:
+                logger.error(f"❌ Error in OpenPositionTracker: {e}")
 
-                except Exception as e:
-                    logger.error(f"❌ Error in OpenPositionTracker: {e}")
-                else:
-                    continue
 
             time.sleep(0.25)
 

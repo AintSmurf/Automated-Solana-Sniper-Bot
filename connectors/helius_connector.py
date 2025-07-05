@@ -158,16 +158,9 @@ class HeliusConnector:
                     return
                 if SIM_MODE:
                     logger.info(f"🧪 [SIM_MODE] Would BUY {token_mint} with ${TRADE_AMOUNT}")
-                elif self.trade_count < MAXIMUM_TRADES:
-                    self.solana_manager.buy("So11111111111111111111111111111111111111112", token_mint, TRADE_AMOUNT)
-                    self.trade_count += 1
-                    save_trade_count(self.trade_count)
-                else:
-                    logger.critical("💥 MAXIMUM_TRADES reached — exiting bot to prevent overtrading.")
-                    exit(1)
-                self.excel_utility.save_to_csv(
+                    self.excel_utility.save_to_csv(
                     self.excel_utility.TOKENS_DIR,
-                    f"bought_tokens_{date_str}.csv",
+                    f"sim_mode_tokens_{date_str}.csv",
                     {
                         "Timestamp": [f"{date_str} {time_str}"],
                         "Signature": [signature],
@@ -175,6 +168,13 @@ class HeliusConnector:
                         "Liquidity (Estimated)": [liquidity],
                     },
                 )
+                elif self.trade_count < MAXIMUM_TRADES:
+                    self.solana_manager.buy("So11111111111111111111111111111111111111112", token_mint, TRADE_AMOUNT)
+                    self.trade_count += 1
+                    save_trade_count(self.trade_count)
+                else:
+                    logger.critical("💥 MAXIMUM_TRADES reached — exiting bot to prevent overtrading.")
+                    exit(1)
                 logger.info(f"🚀 LIQUIDITY passed: ${liquidity:.2f} — considering buy for {token_mint} transaction signature:{signature}")
                 elapsed = time.time() - start_time
                 logger.info(f"⏱️ Finished processing {signature} in {elapsed:.2f}s")

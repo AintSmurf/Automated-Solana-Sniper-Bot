@@ -15,7 +15,7 @@ BOT_SETTINGS = {
     "SIM_MODE": False,
 
     # Take profit multiplier — e.g., 1.3 means +30% from entry price
-    "TP": 4,
+    "TP": 4.0,
 
     # Stop loss multiplier — e.g., 0.95 means -5% from entry price
     "SL": 0.5,
