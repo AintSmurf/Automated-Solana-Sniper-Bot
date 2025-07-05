@@ -27,7 +27,7 @@ BOT_SETTINGS = {
             "min_interval": 0.02,
 
             # Random delay added to each Helius request (to avoid burst patterns)
-            "jitter_range": (0.01, 0.02),
+            "jitter_range": (0.005, 0.01),
         },
         "jupiter": {
             # Minimum time between two requests to Jupiter API (in seconds)
