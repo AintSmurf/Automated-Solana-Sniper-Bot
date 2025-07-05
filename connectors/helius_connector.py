@@ -156,7 +156,7 @@ class HeliusConnector:
                     self.trade_count += 1
                     save_trade_count(self.trade_count)
                 else:
-                    logger.info(f"⚠️ Max trades reached ({MAXIMUM_TRADES}) — skipping buy.")
+                    exit(1)
                 self.excel_utility.save_to_csv(
                     self.excel_utility.TOKENS_DIR,
                     f"bought_tokens_{date_str}.csv",
@@ -168,7 +168,6 @@ class HeliusConnector:
                     },
                 )
                 logger.info(f"🚀 LIQUIDITY passed: ${liquidity:.2f} — considering buy for {token_mint} transaction signature:{signature}")
-                logger.info(f"🧪 [SIM MODE] Would BUY {token_mint} with $25")
                 elapsed = time.time() - start_time
                 logger.info(f"⏱️ Finished processing {signature} in {elapsed:.2f}s")
                 threading.Thread(
@@ -455,4 +454,4 @@ class HeliusConnector:
         if now - self.last_rpc_log_time >= 60: 
             logger.info(f"📊 RPC calls used in the last minute: {self.rpc_call_counter}")
             self.last_rpc_log_time = now
-            self.rpc_call_counter = 0
+            
