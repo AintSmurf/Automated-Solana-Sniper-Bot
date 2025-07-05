@@ -40,29 +40,25 @@ class Discord_Bot:
             logger.warning(f"❌ Channel '{channel_name}' not found!")
 
     async def send_message_from_sniper(
-        self, token_mint, token_owner, liquidity, market_cap, choice, dexscreener_link
+        self, token_mint, investment,choice, dexscreener_link
     ):
         """Send different messages depending on whether it's a Rug Check or Transaction Check."""
         await self.bot_ready.wait()
 
         if choice == 1:
             message = (
-                f"🚨 **passed first test** 🚨\n"
+                f"🚨 **passed first test - HoneyPut and mint authority** 🚨\n"
                 f"🔹 **Mint Address:** `{token_mint}`\n"
-                f"🔹 **Owner:** `{token_owner}`\n"
-                f"🔹 **Liquidity:** `{liquidity}`\n"
-                f"🔹 **Market Cap:** `{market_cap}`\n"
-                f"🔹 **[DexScreener Link]({dexscreener_link})**\n"
+                f"🔹 **investment:** `{investment}`\n"
+                f"🔹 **DexScreener Link**: <{dexscreener_link}>\n"
                 f"⚠️ **Warning: This token didnt pass yet the rest of the tests**"
             )
         else:
             message = (
                 f"🚀 **New Token Passed all tests** 🚀\n"
                 f"🔹 **Mint Address:** `{token_mint}`\n"
-                f"🔹 **Owner:** `{token_owner}`\n"
-                f"🔹 **Liquidity (Estimated):** `{liquidity}`\n"
-                f"🔹 **Market Cap:** `{market_cap}`\n"
-                f"🔹 **[DexScreener Link]({dexscreener_link})**\n"
+                f"🔹 **investment:** `{investment}`\n"
+                f"🔹 **DexScreener Link**: <{dexscreener_link}>\n"
             )
 
         await self.send_message_to_discord("solana_tokens", message)
@@ -81,10 +77,7 @@ class Discord_Bot:
     
     async def check_and_send_new_entries(self, folder, filename, message_type):
         filepath = os.path.join(folder, filename)
-        required_columns = [
-            "Token Mint", "Token Owner",
-            "Liquidity (Estimated)", "Market Cap", "SentToDiscord"
-        ]
+        required_columns = ["Token_bought","SentToDiscord"]
 
         # Keep trying until file exists and is readable with required columns
         while True:
@@ -120,17 +113,13 @@ class Discord_Bot:
 
                 for index, row in new_rows.iterrows():
                     try:
-                        token_mint = row["Token Mint"]
-                        token_owner = row["Token Owner"]
-                        liquidity = row["Liquidity (Estimated)"]
-                        market_cap = row["Market Cap"]
+                        token_mint = row["Token_bought"]
+                        investment = row.get("USD", "N/A")
                         dexscreener_link = f"https://dexscreener.com/solana/{token_mint}"
 
                         await self.send_message_from_sniper(
                             token_mint,
-                            token_owner,
-                            liquidity,
-                            market_cap,
+                            investment,
                             message_type,
                             dexscreener_link,
                         )

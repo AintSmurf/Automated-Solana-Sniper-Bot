@@ -207,8 +207,8 @@ class SolanaHandler:
                     "amount": [token_amount],
                     "USD": [usd_amount],
                     "type": "BUY",
-                    "Sold_At_Price": "",
-                    "SentToDiscord": [False],
+                    "Sold_At_Price": [0],
+                    "SentToDiscord": [False.__bool__()],
                 },
             )
             return response["result"]
