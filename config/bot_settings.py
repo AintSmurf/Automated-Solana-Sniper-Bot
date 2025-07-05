@@ -24,7 +24,7 @@ BOT_SETTINGS = {
     "RATE_LIMITS": {
         "helius": {
             # Minimum time between two requests to Helius API (in seconds)
-            "min_interval": 0.1,
+            "min_interval": 0.02,
 
             # Random delay added to each Helius request (to avoid burst patterns)
             "jitter_range": (0.01, 0.02),
