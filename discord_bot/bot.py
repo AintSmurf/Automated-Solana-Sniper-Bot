@@ -7,6 +7,7 @@ from utilities.credentials_utility import CredentialsUtility
 from utilities.excel_utility import ExcelUtility
 from datetime import datetime
 from helpers.logging_manager import LoggingHandler
+import time
 
 # Set up logger
 logger = LoggingHandler.get_logger()
@@ -81,8 +82,11 @@ class Discord_Bot:
     async def check_and_send_new_entries(self, folder, filename, message_type):
         """Reads the transactions file, sends new data to Discord, and updates the file."""
         filepath = os.path.join(folder, filename)
-        if not os.path.exists(filepath):
-            return
+        
+        # Wait until file is created
+        while not os.path.exists(filepath):
+            logger.debug("📭 Waiting for buy file to be created...")
+            await asyncio.sleep(1)
 
         try:
             df = pd.read_csv(filepath)
