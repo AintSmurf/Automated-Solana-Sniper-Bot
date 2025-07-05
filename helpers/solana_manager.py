@@ -173,13 +173,13 @@ class SolanaHandler:
 
     def buy(self, input_mint: str, output_mint: str, usd_amount: int) -> str:
         logger.info(
-            f"🔄 Initiating buy order for {usd_amount}$ worth\ntoken_bought:{output_mint}\ntoken_sold:{input_mint}"
+            f"🔄 Initiating buy order for {usd_amount}$ worth, token_bought:{output_mint},token_sold:{input_mint}"
         )
         try:
             token_amount = self.get_solana_token_worth_in_dollars(usd_amount)
             quote = self.get_quote(input_mint, output_mint, token_amount)
             price_per_token = usd_amount / float(quote["outAmount"])
-            print("token prince: ", price_per_token)
+            logger.info("token prince: ", price_per_token)
             txn_64 = self.get_swap_transaction(quote)
             self.send_transaction_payload["params"][0] = txn_64
             self.send_transaction_payload["id"] = self.id
@@ -203,7 +203,7 @@ class SolanaHandler:
                     "Timestamp": [f"{date_str} {time_str}"],
                     "Token_price": [token_price],
                     "Token_sold": [input_mint],
-                    "Token boguht": [output_mint],
+                    "Token bought": [output_mint],
                     "amount": [token_amount],
                     "USD": [usd_amount],
                     "type": "BUY",
@@ -231,7 +231,7 @@ class SolanaHandler:
             "X-API-KEY": "01876fc6d5944c7e80b57b0b929c1a4c",
         }
         response = requests.get(url, headers=headers)
-        logger.info(f"response: {response.json()}")
+        logger.debug(f"response: {response.json()}")
         return response.json()["data"]["value"]
 
     def get_solana_token_worth_in_dollars(self, usd_amount: int) -> float:

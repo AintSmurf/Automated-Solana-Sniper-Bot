@@ -12,10 +12,10 @@ BOT_SETTINGS = {
     "MAXIMUX_TRADES": 10,
 
     # Take profit multiplier — e.g., 1.3 means +30% from entry price
-    "TP": 1.3,
+    "TP": 4,
 
     # Stop loss multiplier — e.g., 0.95 means -5% from entry price
-    "SL": 0.95,
+    "SL": 0.5,
 
     # Rate limiting configuration for different APIs to avoid throttling or bans
     "RATE_LIMITS": {

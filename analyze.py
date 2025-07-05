@@ -1,162 +1,70 @@
-from utilities.dexscanner_utility import DexscannerUtility
-import pandas as pd
 import os
-import re 
+import argparse
+from datetime import datetime
+import re
 
-class Analyzer:
-    def __init__(self):
-        self.dx = DexscannerUtility()
+DEBUG_DIR = "logs/debug"
+BACKUP_DEBUG_DIR = "logs/backup/debug"
+INFO_LOG = "logs/info.log"
+OUTPUT_DIR = "logs/matched_logs"
 
-    def analyze_token(self, token_address,dex):
-        all_pairs = self.dx.get_token_pair_address("solana", token_address)
-        results = []
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-        if not all_pairs or not isinstance(all_pairs, list):
-            print(f"❌ No pairs returned for token: {token_address}")
-            return results
+def extract_datetime(line):
+    try:
+        timestamp_str = line.split(" - ")[0]
+        return datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S,%f")
+    except:
+        return datetime.min
 
-        for pair in all_pairs:
-            try:
-                liquidity = pair.get("liquidity", {}).get("usd", 0)
-                if liquidity is None or liquidity < 10:
-                    continue
-                dex_id =  pair.get("dexId",{})
-                if dex_id not in dex:
-                    continue
-                results.append({
-                    "token": pair.get("baseToken", {}).get("address", ""),
-                    "name": pair.get("baseToken", {}).get("name", ""),
-                    "symbol": pair.get("baseToken", {}).get("symbol", ""),
-                    "pairAddress": pair.get("pairAddress", ""),
-                    "dexId": pair.get("dexId", ""),
-                    "liquidity": liquidity,
-                    "volume_h1": pair.get("volume", {}).get("h1", 0),
-                    "volume_h24": pair.get("volume", {}).get("h24", 0),
-                    "priceChange_24h": pair.get("priceChange", {}).get("h24", 0),
-                    "txns_h1": pair.get("txns", {}).get("h1", {}),
-                    "pairCreatedAt": pair.get("pairCreatedAt", 0),
-                    "url": pair.get("url", "")
-                })
+def get_lines_from_dir(directory, keyword):
+    matches = []
+    for file in sorted(os.listdir(directory), key=lambda f: os.path.getmtime(os.path.join(directory, f))):
+        path = os.path.join(directory, file)
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                matches.extend([line.strip() for line in f if keyword in line])
+    return matches
 
-            except Exception as e:
-                print(f"⚠️ Error analyzing pair: {pair.get('pairAddress')} — {e}")
+def get_lines_from_file(path, keyword):
+    with open(path, "r", encoding="utf-8") as f:
+        return [line.strip() for line in f if keyword in line]
 
-        return results
+def deduplicate_preserve_original(lines):
+    normalized_map = {}
+    for line in lines:
+        normalized = re.sub(r"\s+", " ", line.strip())
+        if normalized not in normalized_map:
+            normalized_map[normalized] = line
+    return list(normalized_map.values())
 
-    def make_it_csv(self,path=None,dex=None):
-        token_list = []
-        if path:
-            token_df = pd.read_excel(path)
-            token_list = token_df["token address"].dropna().tolist()
-        else:
-            token_list = [
-                "R63mHshFgKqg8XbvGC8cS1fnHHpcNn2uFGXFGjQ5MGF",
-                "2obLASom28dxTDLJxfocejSD5emSzbESWmXuX4Fubonk",
-                "4SkzBV9WKUNa6FB2qwAeiuXbcyZyfHmGo4QmLxcLbonk",
-            ]
-        all_data = []
-        for token in token_list:
-            print(f"🔍 Analyzing {token}...")
-            data = self.analyze_token(token,dex)
-            all_data.extend(data)
+def extract_logs(signature: str, token_address: str):
+    all_matches = []
 
-        pd.DataFrame(all_data).to_csv("missed_token_analysis.csv", index=False)
-        print("✅ CSV saved: missed_token_analysis.csv")
+    if os.path.exists(DEBUG_DIR):
+        all_matches.extend(get_lines_from_dir(DEBUG_DIR, signature))
 
-    def run_script_on_logs(self, tokens):
-        log_dir = "logs/"
-        results = []
+    if os.path.exists(BACKUP_DEBUG_DIR):
+        all_matches.extend(get_lines_from_dir(BACKUP_DEBUG_DIR, signature))
 
-        steps = {
-            "step_1_mint_instruction": "Passed Step 1",
-            "step_2_blocktime": "Passed Step 2",
-            "step_3_unique_signature": "Passed Step 3",
-            "step_4_token_minted": "Passed Step 4",
-            "liquidity_passed": "LIQUIDITY passed",
-            "liquidity_failed": "Liquidity too low",
-            "safety_passed": "PASSED post-buy safety check",
-            "safety_failed": "FAILED post-buy safety check",
-            "raw_websocket_detected": "websocket response"
-        }
+    if os.path.exists(INFO_LOG):
+        all_matches.extend(get_lines_from_file(INFO_LOG, token_address))
 
-        for token_data in tokens:
-            mint = token_data["token"]
-            pair = token_data["pairAddress"]
+    all_matches = deduplicate_preserve_original(all_matches)
+    all_matches.sort(key=extract_datetime)
 
-            detection_flags = {k: False for k in steps}
-            first_match = {}  # filename: line_number
-            first_reason = None
+    output_path = os.path.join(OUTPUT_DIR, f"{token_address}.log")
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("### TIME-SORTED LOGS ###\n")
+        f.write(f"token_bought:{token_address}\n\n")
+        for line in all_matches:
+            f.write(line + "\n")
 
-            for root, _, files in os.walk(log_dir):
-                for file in files:
-                    if not re.match(r".*\.log(\.\d+)?$", file):
-                        continue
-                    file_path = os.path.join(root, file)
-
-                    try:
-                        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                            for line_num, line in enumerate(f, start=1):
-                                matched = False
-
-                                if mint in line or pair in line:
-                                    if file not in first_match:
-                                        first_match[file] = line_num
-                                    matched = True
-
-                                for key, marker in steps.items():
-                                    if marker in line and mint in line:
-                                        if not detection_flags[key]:
-                                            detection_flags[key] = True
-                                            if not first_reason:
-                                                first_reason = key  # First reason = first failed/passed step
-
-                                if matched and not first_reason and "websocket response" not in line:
-                                    first_reason = "websocket_seen_but_not_processed"
-
-                    except Exception as e:
-                        print(f"⚠️ Error reading {file_path}: {e}")
-                        continue
-
-            # Determine final reason
-            final_reason = (
-                "websocket_failed" if not any(detection_flags.values()) else
-                "post_buy_safety_failed" if detection_flags["safety_failed"] else
-                "✅ safe" if detection_flags["safety_passed"] else
-                "low_liquidity" if detection_flags["liquidity_failed"] else
-                "passed_liquidity" if detection_flags["liquidity_passed"] else
-                "already minted?" if detection_flags["step_4_token_minted"] else
-                "incomplete chain" if detection_flags["step_1_mint_instruction"] else
-                "websocket_seen_but_not_processed"
-            )
-
-            # Get the first file+line where detected
-            if first_match:
-                earliest_file = min(first_match, key=lambda k: first_match[k])
-                earliest_line = first_match[earliest_file]
-                log_ref = f"{earliest_file} (line {earliest_line})"
-            else:
-                log_ref = "None"
-
-            # Build final result row
-            results.append({
-                "token": token_data.get("token", ""),
-                "name": token_data.get("name", ""),
-                "dexId": token_data.get("dexId", ""),
-                "liquidity": token_data.get("liquidity", ""),
-                "txns_h1": token_data.get("txns_h1", ""),
-                "pairCreatedAt": token_data.get("pairCreatedAt", ""),
-                "log_file": log_ref,
-                "final_reason": final_reason,
-            })
-
-        df = pd.DataFrame(results)
-        df.to_csv("missed_token_analysis_checked.csv", index=False)
-        print("✅ Full analysis saved to missed_token_analysis_checked.csv")
-
-
+    print(f"✅ {len(all_matches)} total unique lines written to {output_path}")
 
 if __name__ == "__main__":
-    analyzer = Analyzer()
-    analyzer.make_it_csv(r"analysis-29.6.xlsx",["pumpswap", "pumpfun"])
-    tokens_df = pd.read_csv("missed_token_analysis.csv")
-    analyzer.run_script_on_logs(tokens_df.to_dict(orient="records"))
+    parser = argparse.ArgumentParser(description="Extract and time-sort logs for a given token.")
+    parser.add_argument("--signature", required=True, help="Transaction signature to search in debug logs.")
+    parser.add_argument("--token", required=True, help="Token mint address to search in info.log.")
+    args = parser.parse_args()
+    extract_logs(args.signature, args.token)

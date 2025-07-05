@@ -38,12 +38,12 @@ class OpenPositionTracker:
                         time.sleep(5)
                         continue
 
-                    mints = df["Token boguht"].tolist() + [self.base_token]
+                    mints = df["Token bought"].tolist() + [self.base_token]
                     price_data = self.solana_manager.get_token_prices(mints)["data"]
                     logger.debug(f"price data:{price_data}")
 
                     for idx, row in df.iterrows():
-                        token_mint = row["Token boguht"]
+                        token_mint = row["Token bought"]
                         input_mint = row["Token_sold"]
                         buy_price_per_token = float(row["Token_price"])
 
@@ -83,7 +83,7 @@ class OpenPositionTracker:
                 else:
                     continue
 
-            time.sleep(5)
+            time.sleep(0.25)
 
     def sell_and_update(self, df, idx, token_mint, input_mint, sell_price):
         try:

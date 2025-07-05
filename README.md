@@ -18,7 +18,8 @@ It connects directly to **Helius WebSocket logs** to monitor real-time token min
 - [Installation](#installation)  
 - [Running the Bot](#running-the-bot)  
 - [Roadmap](#roadmap)  
-- [Log Management](#log-management)  
+- [Log Management](#log-management)
+- [Log Summarization Tool](#-log-summarization-tool-analyzepy)
 - [Disclaimer](#disclaimer)  
 - [License](#license)
 
@@ -31,8 +32,8 @@ You'll need the following before running the bot:
 - A funded **Solana wallet**
 - A **Helius API Key** (WebSocket + REST access)
 - A **Jupiter API key** — price & swaps
-- A **Discord bot token** — for notificationss
-- *(Optional)* **BirdEye API Key** (for liquidity & price fallback)
+- A **Discord bot token** — for notifications
+- *(Optional- not used in the bot itself yet)* **BirdEye API Key** (for liquidity & price fallback)
 
 ---
 
@@ -69,6 +70,11 @@ You'll need the following before running the bot:
 
 - 🧵 **Threaded Execution**
   - WebSocket, transaction fetcher, position_tracker, and Discord bot run concurrently
+
+- 🧠 **Log Summarization Script (`analyze.py`)**  
+  - Extracts time-sorted logs per token for deep analysis
+  - Removes duplicates, merges info/debug, and creates human-readable `.log` files
+
 
 ---
 
@@ -116,6 +122,44 @@ BIRD_EYE_API_KEY=your_birdeye_key (optional)
 DISCORD_TOKEN=your_discord_bot_token (optional)
 DEX="Pumpfun" or "Raydium"
 ```
+### 5. Configure bot settings `bot_settings.py`
+```env
+    # Minimum liquidity required (in USD) to consider a token worth evaluating/trading
+    "MIN_TOKEN_LIQUIDITY": 1500,
+
+    # Maximum age (in seconds) of a newly minted token for it to be considered "fresh"
+    "MAX_TOKEN_AGE_SECONDS": 180,
+
+    # Amount (in USD) the bot would hypothetically use to trade per token
+    "TRADE_AMOUNT": 10,
+    
+    #MAXIMUM TRADES
+    "MAXIMUM_TRADES": 10,
+
+    # Take profit multiplier — e.g., 1.3 means +30% from entry price
+    "TP": 1.3,
+
+    # Stop loss multiplier — e.g., 0.95 means -5% from entry price
+    "SL": 0.95,
+
+    # Rate limiting configuration for different APIs to avoid throttling or bans
+    "RATE_LIMITS": {
+        "helius": {
+            # Minimum time between two requests to Helius API (in seconds)
+            "min_interval": 0.1,
+
+            # Random delay added to each Helius request (to avoid burst patterns)
+            "jitter_range": (0.01, 0.02),
+        },
+        "jupiter": {
+            # Minimum time between two requests to Jupiter API (in seconds)
+            "min_interval": 1.1,
+
+            # Random delay added to each Jupiter request (to avoid burst patterns)
+            "jitter_range": (0.05, 0.15),
+        }
+    },
+```
 
 Linux/macOS:
 ```bash
@@ -144,7 +188,7 @@ This will launch:
 ## 🧱 Docker Setup (Optional)
 - You can run the bot inside Docker using the provided **Dockerfile.bot**
   - Step 1: Make sure credential.sh configured
-    ```env
+  ```env
     HELIUS_API_KEY=your_helius_api_key
     SOLANA_PRIVATE_KEY=your_base58_private_key
     BIRD_EYE_API_KEY=your_birdeye_key (optional)
@@ -158,7 +202,7 @@ This will launch:
     - Step 3: Run the bot inside Docker
     ```bash
     docker run solana-sniper-bot
-    ```
+  ```
 
 ## 🛃️ Roadmap
 
@@ -186,6 +230,25 @@ Logs are organized for clarity and traceability:
 | `logs/special_debug.log` | Critical debug logs (e.g. scam analysis)  |
 
 ---
+---
+
+## 🧠 Log Summarization Tool (`analyze.py`)
+
+This tool allows you to extract, clean, and analyze logs for a specific token address and transaction signature.
+
+### 🔎 What It Does
+
+- Searches logs in `logs/debug/`, `logs/backup/debug/`, and `logs/info.log`
+- Merges entries based on signature (debug) and token (info)
+- Removes duplicate lines (even if formatted differently)
+- Sorts everything chronologically
+- Outputs to: `logs/matched_logs/<token_address>.log`
+
+### 🛠 Usage
+
+```bash
+python analyze.py --signature <txn_signature> --token <token_address>
+```
 
 ## ⚠️ Disclaimer
 
