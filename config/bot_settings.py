@@ -6,10 +6,10 @@ BOT_SETTINGS = {
     "MAX_TOKEN_AGE_SECONDS": 180,
 
     # Amount (in USD) the bot would hypothetically use to simulate a trade per token
-    "TRADE_AMOUNT": 15,
+    "TRADE_AMOUNT": 10,
     
     #MAXIMUM TRADES
-    "MAXIMUM_TRADES": 10,
+    "MAXIMUM_TRADES": 15,
 
     # flag for toggling real vs simulated trading 
     "SIM_MODE": False,
