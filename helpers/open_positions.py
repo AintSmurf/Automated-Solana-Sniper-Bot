@@ -107,7 +107,7 @@ class OpenPositionTracker:
             pnl = ((sell_price - df.at[idx, "Token_price"]) / df.at[idx, "Token_price"]) * 100
 
             self.excel_utility.save_to_csv(
-                self.excel_utility.TOKENS_DIR,
+                self.excel_utility.BOUGHT_TOKENS,
                 "closed_positions.csv",
                 {
                     "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],

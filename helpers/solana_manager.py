@@ -206,7 +206,7 @@ class SolanaHandler:
                     "Token_bought": [output_mint],
                     "amount": [token_amount],
                     "USD": [usd_amount],
-                    "type": "BUY",
+                    "type": ["BUY"],
                     "Sold_At_Price": [0],
                     "SentToDiscord": [False.__bool__()],
                 },
