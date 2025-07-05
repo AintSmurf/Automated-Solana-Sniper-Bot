@@ -78,50 +78,75 @@ class Discord_Bot:
             )
 
             await asyncio.sleep(5)
-
+    
     async def check_and_send_new_entries(self, folder, filename, message_type):
-        """Reads the transactions file, sends new data to Discord, and updates the file."""
         filepath = os.path.join(folder, filename)
-        
-        # Wait until file is created
-        while not os.path.exists(filepath):
-            logger.debug("📭 Waiting for buy file to be created...")
-            await asyncio.sleep(1)
+        required_columns = [
+            "Token Mint", "Token Owner",
+            "Liquidity (Estimated)", "Market Cap", "SentToDiscord"
+        ]
 
+        # Keep trying until file exists and is readable with required columns
+        while True:
+            if not os.path.exists(filepath):
+                logger.debug("📭 Waiting for buy file to be created...")
+                await asyncio.sleep(1)
+                continue
+
+            try:
+                df = pd.read_csv(filepath)
+
+                # Check for required columns
+                if not all(col in df.columns for col in required_columns):
+                    logger.debug("📄 File exists but missing required columns — waiting...")
+                    await asyncio.sleep(1)
+                    continue
+
+                break  # file is ready
+
+            except Exception as e:
+                logger.debug(f"⏳ File not ready yet ({e}) — retrying...")
+                await asyncio.sleep(1)
+
+        # ✅ Now file exists and is valid — proceed safely
         try:
-            df = pd.read_csv(filepath)
+            df["SentToDiscord"] = df["SentToDiscord"].fillna(False).astype(bool)
 
             last_processed = self.last_row_counts.get(filepath, 0)
             total_rows = len(df)
 
             if total_rows > last_processed:
-                new_rows = df.loc[~df["SentToDiscord"]]  # Filter rows not sent
+                new_rows = df.loc[~df["SentToDiscord"]]
 
                 for index, row in new_rows.iterrows():
-                    token_mint = row["Token Mint"]
-                    token_owner = row["Token Owner"]
-                    liquidity = row["Liquidity (Estimated)"]
-                    market_cap = row["Market Cap"]
-                    dexscreener_link = f"https://dexscreener.com/solana/{token_mint}"
+                    try:
+                        token_mint = row["Token Mint"]
+                        token_owner = row["Token Owner"]
+                        liquidity = row["Liquidity (Estimated)"]
+                        market_cap = row["Market Cap"]
+                        dexscreener_link = f"https://dexscreener.com/solana/{token_mint}"
 
-                    await self.send_message_from_sniper(
-                        token_mint,
-                        token_owner,
-                        liquidity,
-                        market_cap,
-                        message_type,
-                        dexscreener_link,
-                    )
+                        await self.send_message_from_sniper(
+                            token_mint,
+                            token_owner,
+                            liquidity,
+                            market_cap,
+                            message_type,
+                            dexscreener_link,
+                        )
 
-                    df.loc[index, "SentToDiscord"] = True  # Update sent status
+                        df.loc[index, "SentToDiscord"] = True
+                        logger.info(f"✅ token: {token_mint} sent to discord")
 
-                df.to_csv(filepath, index=False)  # Save changes
+                    except Exception as row_error:
+                        logger.error(f"⚠️ Error processing row {index}: {row_error}")
+
+                df.to_csv(filepath, index=False)
                 logger.info(f"✅ Updated {filename}, marked sent messages.")
-                logger.info(f"token: {token_mint} sent to discord")
                 self.last_row_counts[filepath] = total_rows
 
         except Exception as e:
-            logger.error(f"❌ Error reading/updating {filename}: {e}")
+            logger.error(f"❌ Error processing {filename}: {e}")
 
     async def run(self):
         asyncio.create_task(self.watch_excel_for_updates())
