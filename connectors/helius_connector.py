@@ -37,6 +37,8 @@ MAX_TOKEN_AGE_SECONDS = BOT_SETTINGS["MAX_TOKEN_AGE_SECONDS"]
 MIN_TOKEN_LIQUIDITY = BOT_SETTINGS["MIN_TOKEN_LIQUIDITY"]
 MAXIMUM_TRADES =BOT_SETTINGS["MAXIMUM_TRADES"]
 TRADE_AMOUNT=BOT_SETTINGS["TRADE_AMOUNT"]
+SIM_MODE = BOT_SETTINGS["SIM_MODE"]
+
 
 
 class HeliusConnector:
@@ -151,11 +153,14 @@ class HeliusConnector:
                     logger.warning(f"❌ Scam check failed — skipping {token_mint}")
                     self.cleanup(token_mint)
                     return
-                if self.trade_count < MAXIMUM_TRADES:
+                if SIM_MODE:
+                    logger.info(f"🧪 [SIM_MODE] Would BUY {token_mint} with ${TRADE_AMOUNT}")
+                elif self.trade_count < MAXIMUM_TRADES:
                     self.solana_manager.buy("So11111111111111111111111111111111111111112", token_mint, TRADE_AMOUNT)
                     self.trade_count += 1
                     save_trade_count(self.trade_count)
                 else:
+                    logger.critical("💥 MAXIMUM_TRADES reached — exiting bot to prevent overtrading.")
                     exit(1)
                 self.excel_utility.save_to_csv(
                     self.excel_utility.TOKENS_DIR,
