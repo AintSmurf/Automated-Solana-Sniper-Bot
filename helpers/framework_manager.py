@@ -1,13 +1,16 @@
 import os
 import json
 from config.bot_settings import BOT_SETTINGS
+from datetime import datetime, timezone,timedelta
 
 TRADE_COUNT_FILE = "trade_count.json"
 
-def convert_date_to_readable_format():
-    pass
-
-
+def convert_blocktime_to_readable_format(blocktime):
+    readble_fomrat = datetime.fromtimestamp(blocktime).strftime('%H:%M:%S')
+    return readble_fomrat
+def get_the_dif_between_unix_timestamps(current_time, unix_timestamp):
+    return current_time - unix_timestamp
+    
 def get_payload(file) -> json:
     path = os.path.join(os.path.dirname(__file__), "..", "data", f"{file}.json")
     with open(path, "r", encoding="utf-8") as f:
@@ -23,6 +26,9 @@ def validate_bot_settings():
 
     if not isinstance(BOT_SETTINGS["TRADE_AMOUNT"], (int, float)):
         raise TypeError("TRADE_AMOUNT must be a number")
+    
+    if not isinstance(BOT_SETTINGS["SIM_MODE"], bool):
+        raise TypeError("SIM_MODE must be a bool")
 
     if not isinstance(BOT_SETTINGS["TP"], float):
         raise TypeError("TP must be a float")
@@ -52,4 +58,6 @@ def load_trade_count():
 def save_trade_count(count):
     with open(TRADE_COUNT_FILE, "w") as f:
         json.dump({"count": count}, f)
+
+
 

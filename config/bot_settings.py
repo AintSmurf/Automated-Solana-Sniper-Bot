@@ -3,7 +3,7 @@ BOT_SETTINGS = {
     "MIN_TOKEN_LIQUIDITY": 1500,
 
     # Maximum age (in seconds) of a newly minted token for it to be considered "fresh"
-    "MAX_TOKEN_AGE_SECONDS": 180,
+    "MAX_TOKEN_AGE_SECONDS": 30,
 
     # Amount (in USD) the bot would hypothetically use to simulate a trade per token
     "TRADE_AMOUNT": 10,

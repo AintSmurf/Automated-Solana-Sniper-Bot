@@ -17,7 +17,7 @@ from config.dex_detection_rules import DEX_DETECTION_RULES
 from config.bot_settings import BOT_SETTINGS
 from helpers.framework_manager import load_trade_count,save_trade_count
 from config.blacklist import BLACK_LIST
-
+from helpers.framework_manager import convert_blocktime_to_readable_format,get_the_dif_between_unix_timestamps
 
 
 
@@ -31,8 +31,10 @@ signature_cache = deque(maxlen=20000)
 #to clear
 signature_to_token_mint = {}
 
+#to track flow_time
+flow_timer_by_token = {} 
 
-latest_block_time = int(time.time())
+
 known_tokens = set()
 MAX_TOKEN_AGE_SECONDS = BOT_SETTINGS["MAX_TOKEN_AGE_SECONDS"]
 MIN_TOKEN_LIQUIDITY = BOT_SETTINGS["MIN_TOKEN_LIQUIDITY"]
@@ -53,9 +55,10 @@ class HeliusConnector:
         self.requests_utility = RequestsUtility(HELIUS_URL["BASE_URL"])
         self.api_key = credentials_utility.get_helius_api_key()
         self.dex_name = credentials_utility.get_dex()["DEX"]     
-        self.latest_block_time = int(time.time())
         self.trade_count = load_trade_count()
         self.rpc_call_counter = 0 
+        self.transaction_timers = {}
+        self.flow_timer_by_token = {} 
         self.last_rpc_log_time = time.time()
         if devnet:
             self.wss_url = HELIUS["LOGS_SOCKET_DEVNET"] + self.api_key["HELIUS_API_KEY"]
@@ -70,11 +73,10 @@ class HeliusConnector:
         self.transaction_payload = get_payload("Transaction")
         self.transaction_simulation_payload = get_payload("Transaction_simulation")
         self.token_address_payload = get_payload("Token_adress_payload")
-        self.lastest_slot_paylaod = get_payload("Slot_payload")
+        self.block_time_payload = get_payload("Blocktime_payload")
 
     def fetch_transaction(self, signature: str, tx_data=None):
         logger.info(f"Fetching transaction details for: {signature}")
-        start_time = time.time()
 
         if tx_data is None:
             self.transaction_payload["id"] = self.id
@@ -94,13 +96,10 @@ class HeliusConnector:
         try:
             results = tx_data.get("result", {})
             post_token_balances = results.get("meta", {}).get("postTokenBalances", [])
+            token_mint = self.extract_new_mint(post_token_balances)
+            token_owner = next((b.get("owner") for b in post_token_balances if b.get("mint") == token_mint), "N/A")
+            blocktime_transaction = tx_data['result']['blockTime']
 
-            if not post_token_balances or "mint" not in post_token_balances[0]:
-                logger.warning(f"⚠️ No valid token mint found for transaction: {signature}")
-                return
-
-            token_mint = post_token_balances[0]["mint"]
-            token_owner = post_token_balances[0].get("owner", "N/A")
             if token_mint in BLACK_LIST:
                 logger.info(f"⛔ Token {token_mint} is blacklisted — skipping.")
                 return
@@ -117,14 +116,17 @@ class HeliusConnector:
 
             age = self._get_token_age(token_mint)
             if age is None:
-                logger.warning(f"⚠️ Could not determine mint age for {token_mint}, skipping.")
+                logger.warning(f"⛔ Token {token_mint} analysis took too long. Skipping.")
+                self.cleanup(token_mint)
                 return
 
             if age > MAX_TOKEN_AGE_SECONDS:
-                logger.info(f"⏩ Token {token_mint} is too old ({age}s), skipping.")
+                logger.warning(f"⏳ Token {token_mint} is too old ({age:.2f}s) — skipping.")
+                self.cleanup(token_mint)
                 return
 
-            logger.info(f"✅ Passed Step 6: Token {token_mint} is {age}s old.")
+            logger.info(f"✅ Passed Step 6: Token {token_mint} is {age:.2f}s old.")
+
 
             if token_mint in known_tokens:
                 logger.debug(f"⏩ Ignoring known token: {token_mint}")
@@ -176,8 +178,15 @@ class HeliusConnector:
                     logger.critical("💥 MAXIMUM_TRADES reached — exiting bot to prevent overtrading.")
                     exit(1)
                 logger.info(f"🚀 LIQUIDITY passed: ${liquidity:.2f} — considering buy for {token_mint} transaction signature:{signature}")
-                elapsed = time.time() - start_time
-                logger.info(f"⏱️ Finished processing {signature} in {elapsed:.2f}s")
+                
+                #calculate flow time
+                start_time = flow_timer_by_token.pop(token_mint, None)
+                if start_time:
+                    duration = time.time() - start_time
+                    logger.info(f"🕒 Flow duration for {token_mint}: {duration:.2f} seconds")
+                else:
+                    logger.warning(f"⚠️ No start time found for {token_mint}")
+                
                 threading.Thread(
                     target=self.solana_manager.post_buy_safety_check,
                     args=(token_mint, token_owner, signature, liquidity, market_cap),
@@ -288,30 +297,13 @@ class HeliusConnector:
             signature_cache.append(signature)  
             logger.info(f"✅ Passed Step 1: Mint instruction found in {signature}.")
 
-            # Step 2: Check if the transaction is recent
-            current_time = int(time.time())
-            if block_time:
-                if (current_time - block_time) > 30:
-                    logger.warning(
-                        f"⚠️ Ignoring old transaction: {signature} (BlockTime: {block_time})"
-                    )
-                    return
-            else:
-                latest_slot = self.get_latest_slot()
-                if (latest_slot - slot) * 0.4 > 30:  # Approximate fallback
-                    logger.warning(
-                        f"⚠️ Ignoring old transaction: {signature} (Slot: {slot})"
-                    )
-                    return
-            logger.info("✅ Passed Step 2: Transaction is within 30 seconds.")
-
-            # Step 3: Ignore duplicates from queue
+            # Step 2: Ignore duplicates from queue
             if signature in signature_queue:
                 logger.debug(f"⏩ Ignoring duplicate signature from queue: {signature}")
                 return
-            logger.info(f"✅ Passed Step 3: Unique new token detected:{signature}")
+            logger.info(f"✅ Passed Step 2: Unique new token detected:{signature}")
 
-            # Step 4: Fetch transaction data (just once)
+            # Step 3: Fetch transaction data (just once)
             logger.info(f"📤 Fetching first TX data for {signature}")
             tx_data = self.get_transaction_data(signature)
             if not tx_data:
@@ -319,31 +311,27 @@ class HeliusConnector:
                 return
 
             post_token_balances = tx_data.get("result", {}).get("meta", {}).get("postTokenBalances", [])
-            if not post_token_balances:
-                logger.warning(f"❌ Token mint not found in transaction: {signature}")
-                return
-            
-            # 🧪 Analyze token mints
-            mints = [b.get("mint") for b in post_token_balances if b.get("mint")]
-            unique_mints = list(set(mints))
+            token_mint = self.extract_new_mint(post_token_balances)
 
-            logger.debug(f"🔍 Mints found in transaction: {mints}")
-            logger.info(f"🔢 Unique token mints in TX {signature}: {len(unique_mints)}")
-            
-            token_mint = post_token_balances[0].get("mint", "N/A")
-            if token_mint == "N/A" or token_mint is None:
-                logger.warning(f"❌ Invalid token mint from TX: {signature}")
+            if not token_mint:
+                logger.warning(f"❌ Could not identify a new token mint in TX: {signature}")
                 return
+
             logger.debug(f"🪙 postTokenBalances for {signature}: {post_token_balances}")
-            logger.info(f"✅ Passed Step 4: Found token address: {token_mint}")
-            # Step 5: Add to queue with tx_data and save temporary for later to use the token address
+            logger.info(f"✅ Passed Step 3: Found NEW token address: {token_mint}")
+            
+            #start flow timer
+            self._start_detection_timer(token_mint)
+            self._start_flow_timer(token_mint)
+
+            # Step 4: Add to queue with tx_data and save temporary for later to use the token address
             signature_to_token_mint[signature] = token_mint
             logger.debug(f"🧭 Mapped Signature → Mint: {signature} → {token_mint}")
             signature_queue.append((signature, tx_data))
-
+            logger.info(f"✅ Step 4: added the token to {token_mint} ->  Signature {signature}")
             # Step 6: Prefetch recent txs for the same token
             try:
-                txs = self.get_recent_transactions_for_token(token_mint)[1:4]
+                txs = self.get_recent_transactions_for_token(token_mint)[1:5]
                 if txs:
                     logger.info(f"📦 Found {len(txs)} early txs after mint — pre-queuing...")
                 else:
@@ -352,7 +340,7 @@ class HeliusConnector:
                     if tx_sig in signature_cache:
                         continue
                     signature_cache.append(tx_sig)
-                    signature_queue.appendleft(tx_sig)
+                    signature_queue.append((tx_sig, tx_data))
                     logger.debug(f"🧊 Queued early tx: {tx_sig}")
             except Exception as e:
                 logger.error(f"❌ Failed to prefetch txs for {signature}: {e}")
@@ -370,12 +358,13 @@ class HeliusConnector:
         time.sleep(5)
         self.start_ws()  # Auto-reconnect
 
-    def get_latest_slot(self):
-        self.lastest_slot_paylaod["id"] = self.id
+    def _get_block_time(self,slot):
+        self.block_time_payload["id"] = self.id
         self.id += 1
+        self.block_time_payload["params"][0] = slot
         self.helius_rate_limiter.wait()
         response = self.requests_utility.post(
-            endpoint=self.api_key["HELIUS_API_KEY"], payload=self.lastest_slot_paylaod
+            endpoint=self.api_key["HELIUS_API_KEY"], payload=self.block_time_payload
         )
         self.rpc_call_counter += 1
         self._log_rpc_usage()
@@ -437,24 +426,26 @@ class HeliusConnector:
             logger.error(f"❌ Error resolving mint for TX {signature}: {e}")
         return None
 
-    def cleanup(self,token_mint):
+    def cleanup(self, token_mint):
         signature_queue_copy = list(signature_queue)
         signature_queue.clear()
-        for sig in signature_queue_copy:
-            if isinstance(sig, tuple):
-                signature = sig[0]
-            else:
-                signature = sig
 
-            mint = signature_to_token_mint.get(signature)
-            if mint != token_mint:
-                signature_queue.append(sig)
+        for item in signature_queue_copy:
+            if isinstance(item, tuple):
+                signature, tx_data = item
+            else:
+                signature = item
+                tx_data = None
+
+            if signature_to_token_mint.get(signature) != token_mint:
+                signature_queue.append((signature, tx_data)) 
 
         removed = 0
         for sig, mint in list(signature_to_token_mint.items()):
             if mint == token_mint:
                 signature_to_token_mint.pop(sig, None)
                 removed += 1
+
         logger.info(f"🧹 Cleaned up {removed} signatures for token {token_mint}")
 
     def _log_rpc_usage(self):
@@ -463,3 +454,21 @@ class HeliusConnector:
             logger.info(f"📊 RPC calls used in the last minute: {self.rpc_call_counter}")
             self.last_rpc_log_time = now
             
+    def extract_new_mint(self, post_balances):
+        for b in post_balances:
+            mint = b.get("mint")
+            if mint and mint != "So11111111111111111111111111111111111111112":
+                return mint
+        return None
+   
+    def _start_flow_timer(self,token_mint):
+        flow_timer_by_token[token_mint] = time.time()
+
+    def _start_detection_timer(self, token_mint: str):
+        self.transaction_timers[token_mint] = time.time()
+
+    def _get_token_age(self, token_mint: str) -> float | None:
+        start = self.transaction_timers.get(token_mint)
+        if start is None:
+            return None
+        return time.time() - start
