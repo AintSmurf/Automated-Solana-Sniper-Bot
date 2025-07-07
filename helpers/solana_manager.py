@@ -175,7 +175,12 @@ class SolanaHandler:
         logger.info(f"🔄 Initiating buy for ${usd_amount} — Token: {output_mint}")
 
         try:
-            # Your usual quote + transaction building logic...
+            token_amount = self.get_solana_token_worth_in_dollars(usd_amount)
+            quote = self.get_quote(input_mint, output_mint, token_amount)
+            txn_64 = self.get_swap_transaction(quote)
+            self.send_transaction_payload["params"][0] = txn_64
+            self.send_transaction_payload["id"] = self.id
+            self.id += 1
             response = self.helius_requests.post(
                 self.api_key["HELIUS_API_KEY"], payload=self.send_transaction_payload
             )
