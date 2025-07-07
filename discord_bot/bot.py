@@ -68,7 +68,7 @@ class Discord_Bot:
             logger.debug("📊 Checking for new Excel entries...")
             now = datetime.now()
             date_str = now.strftime("%Y-%m-%d")
-            rug_check_file = f"bought_tokens_{date_str}.csv"
+            rug_check_file = f"discord_{date_str}.csv"
             await self.check_and_send_new_entries(
                 self.excel_utility.BOUGHT_TOKENS, rug_check_file, 1
             )

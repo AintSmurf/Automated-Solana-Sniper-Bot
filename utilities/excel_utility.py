@@ -31,3 +31,17 @@ class ExcelUtility:
 
         updated_df.to_csv(filepath, index=False)
         logger.debug(f"✅ Data saved to {filepath}")
+    
+    def remove_row_by_token(self, filepath: str, token_mint: str):
+        try:
+            df = pd.read_csv(filepath)
+            initial_len = len(df)
+            df = df[df["Token_bought"] != token_mint]  # keep everything except this token
+            df.to_csv(filepath, index=False)
+
+            if len(df) < initial_len:
+                logger.debug(f"🧼 Removed token {token_mint} from {filepath}")
+            else:
+                logger.warning(f"⚠️ Token {token_mint} not found in {filepath}")
+        except Exception as e:
+            logger.error(f"❌ Failed to remove token from {filepath}: {e}")

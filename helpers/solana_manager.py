@@ -195,22 +195,23 @@ class SolanaHandler:
             time_str = now.strftime("%H:%M:%S")
             filename = f"bought_tokens_{date_str}.csv"
             token_price = self.get_token_price(output_mint)
-            # save all tokens
-            self.excel_utility.save_to_csv(
-                self.excel_utility.BOUGHT_TOKENS,
-                filename,
-                {
-                    "Timestamp": [f"{date_str} {time_str}"],
-                    "Token_price": [token_price],
-                    "Token_sold": [input_mint],
-                    "Token_bought": [output_mint],
-                    "amount": [token_amount],
-                    "USD": [usd_amount],
-                    "type": ["BUY"],
-                    "Sold_At_Price": [0],
-                    "SentToDiscord": [False.__bool__()],
-                },
-            )
+            # save bought tokens for later analysis
+            data = {
+                "Timestamp": [f"{date_str} {time_str}"],
+                "Token_price": [token_price],
+                "Token_sold": [input_mint],
+                "Token_bought": [output_mint],
+                "amount": [token_amount],
+                "USD": [usd_amount],
+                "type": ["BUY"],
+                "Sold_At_Price": [0],
+                "SentToDiscord": [False],
+            }
+
+            self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, filename, data)
+            self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"open_positions_{date_str}.csv", data)
+            self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"discord_{date_str}.csv", data)
+
             return response["result"]
         except Exception as e:
             logger.error(f"❌ Failed to place buy order: {e}")
@@ -443,44 +444,55 @@ class SolanaHandler:
             logger.error(f"❌ Error fetching market cap: {e}")
             return 0
 
-    def sell(self, input_mint: str, output_mint: str, usd_amount: int = None) -> None:
-        logger.info(
-            f"🔄 Initiating sell order, Token Sold: {input_mint}, Token Received: {output_mint}"
-        )
-        try:
-            token_balances = self.get_account_balances()
-            token_info = next(
-                (t for t in token_balances if t["token_mint"] == input_mint), None
-            )
+    def sell(self, input_mint: str, output_mint: str, usd_amount: int = None) -> dict:
+        logger.info(f"🔄 Initiating sell order: Selling {input_mint} for {output_mint}")
 
-            if not token_info:
+        try:
+            # Step 1: Get token balance
+            token_balances = self.get_account_balances()
+            token_info = next((t for t in token_balances if t["token_mint"] == input_mint), None)
+
+            if not token_info or token_info["balance"] <= 0:
                 logger.warning(f"⚠️ No balance found for token: {input_mint}")
-                return
+                return {"success": False, "executed_price": 0.0, "signature": ""}
 
             token_balance = token_info["balance"]
             decimals = self.get_token_decimals(input_mint)
-            raw_amount = int(float(token_balance) * (10**decimals))
+            raw_amount = int(float(token_balance) * (10 ** decimals))
 
-            if token_balance <= 0:
-                logger.warning(f"⚠️ No tokens to sell for {input_mint}")
-                return
+            # Step 2: Get swap quote
             quote = self.get_quote(input_mint, output_mint, raw_amount)
+            price_per_token = float(quote["outAmount"]) / raw_amount
+
+            # Step 3: Get transaction
             txn_64 = self.get_swap_transaction(quote)
             self.send_transaction_payload["params"][0] = txn_64
             self.send_transaction_payload["id"] = self.id
             self.id += 1
+
             self.helius_rate_limiter.wait()
+
             response = self.helius_requests.post(
                 self.api_key["HELIUS_API_KEY"], payload=self.send_transaction_payload
             )
+
+            # Step 4: Handle response
             if "error" in response:
                 logger.error(f"❌ Sell failed: {response['error']}")
-            else:
-                logger.info(f"✅ Sell order completed: token {input_mint}")
-                logger.debug(f"✅ Sell order completed: {response}")
-            return response.get("result")
+                return {"success": False, "executed_price": 0.0, "signature": ""}
+            
+            signature = response["result"]
+            logger.info(f"✅ Sell completed: Signature: {signature}")
+
+            return {
+                "success": True,
+                "executed_price": price_per_token,
+                "signature": signature,
+            }
+
         except Exception as e:
-            logger.error(f"❌ Failed to place sell order: {e}")
+            logger.error(f"❌ Exception during sell: {e}")
+            return {"success": False, "executed_price": 0.0, "signature": ""}
 
     def is_token_scam(self, response_json, token_mint) -> bool:
 

@@ -43,6 +43,9 @@ def main():
 
     threading.Thread(target=tracker.track_positions, daemon=True).start()
     logger.info("✅ Position tracker started")
+    
+    threading.Thread(target=tracker.retry_failed_sells, daemon=True).start()
+    logger.info("🔄 Sell retry thread started")
 
     threading.Thread(target=start_discord_bot, daemon=True).start()
     logger.info("✅ Discord bot (with Excel watcher) started in a separate thread")
