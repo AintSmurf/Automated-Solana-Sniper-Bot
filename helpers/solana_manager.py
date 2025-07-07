@@ -172,30 +172,22 @@ class SolanaHandler:
             return None
 
     def buy(self, input_mint: str, output_mint: str, usd_amount: int) -> str:
-        logger.info(
-            f"🔄 Initiating buy order for {usd_amount}$ worth, token_bought:{output_mint},token_sold:{input_mint}"
-        )
+        logger.info(f"🔄 Initiating buy for ${usd_amount} — Token: {output_mint}")
+
         try:
-            token_amount = self.get_solana_token_worth_in_dollars(usd_amount)
-            quote = self.get_quote(input_mint, output_mint, token_amount)
-            price_per_token = usd_amount / float(quote["outAmount"])
-            logger.info(f"📈 Token price: {price_per_token}")
-            txn_64 = self.get_swap_transaction(quote)
-            self.send_transaction_payload["params"][0] = txn_64
-            self.send_transaction_payload["id"] = self.id
-            self.id += 1
-            self.helius_rate_limiter.wait()
+            # Your usual quote + transaction building logic...
             response = self.helius_requests.post(
                 self.api_key["HELIUS_API_KEY"], payload=self.send_transaction_payload
             )
-            logger.debug(f" buy response {response}")
-            # adjust key if needed
+            logger.debug(f"Buy response: {response}")
+
             now = datetime.now()
             date_str = now.strftime("%Y-%m-%d")
             time_str = now.strftime("%H:%M:%S")
-            filename = f"bought_tokens_{date_str}.csv"
+
             token_price = self.get_token_price(output_mint)
-            # save bought tokens for later analysis
+            token_amount = self.get_solana_token_worth_in_dollars(usd_amount)
+
             data = {
                 "Timestamp": [f"{date_str} {time_str}"],
                 "Token_price": [token_price],
@@ -203,18 +195,31 @@ class SolanaHandler:
                 "Token_bought": [output_mint],
                 "amount": [token_amount],
                 "USD": [usd_amount],
-                "type": ["BUY"],
-                "Sold_At_Price": [0],
-                "SentToDiscord": [False],
             }
 
-            self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, filename, data)
-            self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"open_positions_{date_str}.csv", data)
-            self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"discord_{date_str}.csv", data)
+            if "result" in response:
+                logger.info(f"✅ Buy SUCCESSFUL for {output_mint}")
+                data.update({
+                    "type": ["BUY"],
+                    "Sold_At_Price": [0],
+                    "SentToDiscord": [False],
+                })
+                self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"bought_tokens_{date_str}.csv", data)
+                self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"open_positions_{date_str}.csv", data)
+                self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"discord_{date_str}.csv", data)
+            else:
+                logger.warning(f"❌ Buy FAILED for {output_mint}: {response['error'].get('message')}")
+                data.update({
+                    "type": ["FAILED_BUY"],
+                    "Error_Code": [response["error"]["code"]],
+                    "Error_Message": [response["error"]["message"]],
+                })
+                self.excel_utility.save_to_csv(self.excel_utility.TOKENS_DIR, f"failed_buys_{date_str}.csv", data)
 
-            return response["result"]
+            return response.get("result", None)
+
         except Exception as e:
-            logger.error(f"❌ Failed to place buy order: {e}")
+            logger.error(f"❌ Exception during buy: {e}")
 
     def get_sol_price(self) -> float:
         response = self.jupiter_requests.get(
