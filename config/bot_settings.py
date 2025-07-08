@@ -18,7 +18,7 @@ BOT_SETTINGS = {
     "TP": 4.0,
 
     # Stop loss multiplier — e.g., 0.95 means -5% from entry price
-    "SL": 0.2,
+    "SL": 0.3,
 
     # Rate limiting configuration for different APIs to avoid throttling or bans
     "RATE_LIMITS": {

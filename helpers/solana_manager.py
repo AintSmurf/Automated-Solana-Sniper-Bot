@@ -210,7 +210,7 @@ class SolanaHandler:
                     "SentToDiscord": [False],
                 })
                 self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"bought_tokens_{date_str}.csv", data)
-                self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"open_positions_{date_str}.csv", data)
+                self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"open_positions.csv", data)
                 self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"discord_{date_str}.csv", data)
             else:
                 logger.warning(f"❌ Buy FAILED for {output_mint}: {response['error'].get('message')}")

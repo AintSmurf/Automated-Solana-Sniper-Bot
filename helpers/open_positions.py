@@ -23,9 +23,7 @@ class OpenPositionTracker:
         self.max_retries = 3
         self.tokens_to_remove = set()
         self.tokens_lock = threading.Lock()
-        now = datetime.now()
-        date_str = now.strftime("%Y-%m-%d")
-        self.file_path = os.path.join(self.excel_utility.BOUGHT_TOKENS, f"open_positions_{date_str}.csv")
+        self.file_path = os.path.join(self.excel_utility.BOUGHT_TOKENS, "open_positions.csv")
 
     def track_positions(self):
         logger = LoggingHandler.get_logger()
