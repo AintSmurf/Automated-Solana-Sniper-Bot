@@ -40,7 +40,7 @@ class OpenPositionTracker:
                     logger.debug("📭 open_positions.csv is empty.")
                     time.sleep(5)
                     continue
-                required_columns = {"Token_bought", "Token_sold", "Token_price", "type"}
+                required_columns = {"Token_bought", "Token_sold", "Token_price", "type", "Real_Entry_Price"}
                 if not required_columns.issubset(df.columns):
                     logger.info("📄 File exists but missing expected columns — waiting...")
                     time.sleep(1)
@@ -54,8 +54,7 @@ class OpenPositionTracker:
                 for idx, row in df.iterrows():
                     token_mint = row["Token_bought"]
                     input_mint = row["Token_sold"]
-                    buy_price_per_token = float(row["Token_price"])
-
+                    buy_price_per_token = float(row["Real_Entry_Price"] if "Real_Entry_Price" in row and not pd.isna(row["Real_Entry_Price"]) else row["Token_price"])
                     if token_mint not in price_data or input_mint not in price_data:
                         logger.warning(f"⚠️ Missing price data for {token_mint}")
                         continue

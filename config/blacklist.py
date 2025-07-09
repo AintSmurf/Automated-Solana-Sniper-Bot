@@ -8,5 +8,11 @@ BLACK_LIST = {
   "G7VgkZuf3CAokUsKyGoQyrPyjZ8fsK6U9ydsZwFaEAX9",  # ye
   "GXtfShnAS5C2gCkC5Pe8KzEy4fhprxUNbPPZ65KXgBCdG"  # URANUS
   "FV6Xcw9K5GZRb2jDN7e6xXgzs4ZDgJM1BE6nWRqRbonk",  #Air Coin (空气币)
+  "Ftht3wMjXtgdvKyxghh8jxiUgJ3vhEQKdv9o49bQpump",#Initial Pump Offering
+  "5Ymg9MwdKcQBY14STVyH5yPw4Ud34LrmNDAbQVtJpump"#Token LITTLE MANYU
+  "GxnA29LqastdhHjnvPKncLbjrpWYCCDsXHnP4a7JhEfi,"#Token magnet
+  "9WjAqEtYzXurAg6HuevY7bqJKk4ms5qQFAqeRwWRpump",#Token PUMP
+
+
 }
 
