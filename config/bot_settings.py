@@ -12,7 +12,7 @@ BOT_SETTINGS = {
     "MAXIMUM_TRADES": 20,
 
     # flag for toggling real vs simulated trading 
-    "SIM_MODE": False,
+    "SIM_MODE": True,
 
     # Take profit multiplier — e.g., 1.3 means +30% from entry price
     "TP": 4.0,
@@ -35,6 +35,9 @@ BOT_SETTINGS = {
 
             # Random delay added to each Jupiter request (to avoid burst patterns)
             "jitter_range": (0.05, 0.15),
+            
+            # max requests per second
+            "max_requests_per_minute": 60 
         }
     },
 }

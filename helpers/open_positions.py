@@ -7,6 +7,7 @@ from datetime import datetime
 from helpers.solana_manager import SolanaHandler
 from helpers.rate_limiter import RateLimiter
 import threading
+from config.bot_settings import BOT_SETTINGS
 
 logger = LoggingHandler.get_logger()
 
@@ -28,62 +29,78 @@ class OpenPositionTracker:
     def track_positions(self):
         logger = LoggingHandler.get_logger()
         logger.info("📚 Starting to track open positions from Excel...")
+        if BOT_SETTINGS["SIM_MODE"]:
+            self.file_path = os.path.join(self.excel_utility.BOUGHT_TOKENS, "simulated_tokens.csv")
+
         while self.running:
             if not os.path.exists(self.file_path):
                 logger.debug("📭 Waiting for buy file to be created...")
                 time.sleep(1)
                 continue
-            
+
             try:
                 df = pd.read_csv(self.file_path)
                 if df.empty:
                     logger.debug("📭 open_positions.csv is empty.")
                     time.sleep(5)
                     continue
-                required_columns = {"Token_bought", "Token_sold", "Token_price", "type", "Real_Entry_Price"}
+
+                required_columns = {"Token_bought", "Token_sold", "Quote_Price", "type", "Real_Entry_Price"}
                 if not required_columns.issubset(df.columns):
                     logger.info("📄 File exists but missing expected columns — waiting...")
                     time.sleep(1)
                     continue
 
-                df = df[df["type"] == "BUY"]
+                df = df[df["type"].isin(["BUY", "SIMULATED_BUY"])]
                 mints = df["Token_bought"].tolist() + [self.base_token]
                 price_data = self.solana_manager.get_token_prices(mints)["data"]
-                logger.debug(f"price data:{price_data}")
+                logger.debug(f"price data: {price_data}")
 
                 for idx, row in df.iterrows():
                     token_mint = row["Token_bought"]
                     input_mint = row["Token_sold"]
-                    buy_price_per_token = float(row["Real_Entry_Price"] if "Real_Entry_Price" in row and not pd.isna(row["Real_Entry_Price"]) else row["Token_price"])
-                    if token_mint not in price_data or input_mint not in price_data:
-                        logger.warning(f"⚠️ Missing price data for {token_mint}")
+
+                    if token_mint not in price_data or input_mint not in price_data or self.base_token not in price_data:
+                        logger.warning(f"⚠️ Missing price data for {token_mint} or SOL.")
                         continue
 
-                    current_price = float(price_data[token_mint]["price"])
+                    # 🟡 Entry price is in SOL
+                    buy_price_sol = float(row["Real_Entry_Price"] if "Real_Entry_Price" in row and not pd.isna(row["Real_Entry_Price"]) else row["Quote_Price"])
 
-                    take_profit_price = buy_price_per_token * self.tp
-                    stop_loss_price = buy_price_per_token * self.sl
-                    change = ((current_price - buy_price_per_token) / buy_price_per_token) * 100
+                    # ✅ Convert entry price to USD using current SOL price
+                    sol_price_usd = float(price_data[self.base_token]["price"])
+                    buy_price_usd = buy_price_sol * sol_price_usd
 
+                    # ✅ Current token price from Jupiter is in USD
+                    current_price_usd = float(price_data[token_mint]["price"])
+
+                    # ✅ Compute TP/SL in USD
+                    take_profit_price = buy_price_usd * self.tp
+                    stop_loss_price = buy_price_usd * self.sl
+
+                    change = ((current_price_usd - buy_price_usd) / buy_price_usd) * 100
 
                     logger.info(
-                        f"🔎 Tracking {token_mint}... Current: {current_price:.10f}, Buy: {buy_price_per_token:.10f}, change: {change:.2f}%"
+                        f"🔎 Tracking {token_mint}... Buy: ${buy_price_usd:.10f}, Current: ${current_price_usd:.10f}, TP: ${take_profit_price:.10f}, SL: ${stop_loss_price:.10f}, Change: {change:.2f}%"
                     )
 
-                    if current_price >= take_profit_price:
-                        logger.info(
-                            f"🎯 TAKE PROFIT triggered for {token_mint}! Selling..."
-                        )
-                        self.sell_and_update(token_mint, input_mint)
+                    if current_price_usd >= take_profit_price:
+                        logger.info(f"🎯 TAKE PROFIT triggered for {token_mint}!")
+                        if row["type"] == "SIMULATED_BUY":
+                            self.simulated_sell_and_log(row, current_price_usd, trigger="TP")
+                        else:
+                            self.sell_and_update(token_mint, input_mint, trigger="TP")
                         continue
 
-                    if current_price <= stop_loss_price:
-                        logger.info(
-                            f"🚨 STOP LOSS triggered for {token_mint}! Selling..."
-                        )
-                        self.sell_and_update(token_mint, input_mint)
+                    if current_price_usd <= stop_loss_price:
+                        logger.info(f"🚨 STOP LOSS triggered for {token_mint}!")
+                        if row["type"] == "SIMULATED_BUY":
+                            self.simulated_sell_and_log(row, current_price_usd, trigger="SL")
+                        else:
+                            self.sell_and_update(token_mint, input_mint, trigger="SL")
                         continue
-                
+
+
                 with self.tokens_lock:
                     if self.tokens_to_remove:
                         df = df[~df["Token_bought"].isin(self.tokens_to_remove)]
@@ -94,10 +111,9 @@ class OpenPositionTracker:
             except Exception as e:
                 logger.error(f"❌ Error in OpenPositionTracker: {e}")
 
-
             time.sleep(0.25)
     
-    def sell_and_update(self, token_mint, input_mint):
+    def sell_and_update(self, token_mint, input_mint, trigger=None):
         try:
             result = self.solana_manager.sell(token_mint, input_mint)
 
@@ -109,10 +125,9 @@ class OpenPositionTracker:
                     self.failed_sells[token_mint]["retries"] += 1
                 return
 
-            executed_price = result["executed_price"]
+            executed_price_usd = result["executed_price"]  # ✅ assumed USD
             signature = result.get("signature", "")
 
-            # Load the token's original buy price from file
             try:
                 current_df = pd.read_csv(self.file_path)
                 matched_row = current_df[current_df["Token_bought"] == token_mint]
@@ -121,21 +136,33 @@ class OpenPositionTracker:
                     logger.warning(f"⚠️ No matching entry price found for {token_mint}")
                     return
 
-                entry_price = float(matched_row.iloc[0]["Token_price"])
+                entry_price_sol = float(
+                    matched_row.iloc[0]["Real_Entry_Price"]
+                    if "Real_Entry_Price" in matched_row.columns and not pd.isna(matched_row.iloc[0]["Real_Entry_Price"])
+                    else matched_row.iloc[0]["Quote_Price"]
+                )
+
+                # ✅ Convert entry price (SOL) → USD
+                price_data = self.solana_manager.get_token_prices([self.base_token])["data"]
+                sol_price_usd = float(price_data[self.base_token]["price"])
+                entry_price_usd = entry_price_sol * sol_price_usd
+
             except Exception as e:
-                logger.error(f"❌ Failed to read entry price for {token_mint}: {e}")
+                logger.error(f"❌ Failed to read or convert entry price for {token_mint}: {e}")
                 return
 
-            pnl = ((executed_price - entry_price) / entry_price) * 100
+            pnl = ((executed_price_usd - entry_price_usd) / entry_price_usd) * 100
 
             data = {
                 "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
                 "Token Mint": [token_mint],
-                "Entry": [entry_price],
-                "Exit": [executed_price],
+                "Entry_USD": [entry_price_usd],
+                "Exit_USD": [executed_price_usd],
                 "PnL (%)": [round(pnl, 2)],
-                "Signature": [signature],
-                "Type": ["SOLD"]
+                "Sell_Signature": [signature],
+                "Buy_Signature": [matched_row.iloc[0].get("Signature", "")],
+                "Type": ["SOLD"],
+                "Trigger": [trigger or "MANUAL"]
             }
 
             self.excel_utility.save_to_csv(
@@ -146,11 +173,16 @@ class OpenPositionTracker:
 
             with self.tokens_lock:
                 self.tokens_to_remove.add(token_mint)
-            logger.info(f"✅ Sold {token_mint} | Executed: {executed_price:.8f} | PnL: {pnl:.2f}%")
+
+            logger.info(f"✅ Sold {token_mint} | Entry: ${entry_price_usd:.8f} | Exit: ${executed_price_usd:.8f} | PnL: {pnl:.2f}%")
 
         except Exception as e:
             logger.error(f"❌ Exception in sell_and_update for {token_mint}: {e}")
-    
+            if token_mint not in self.failed_sells:
+                self.failed_sells[token_mint] = {"input_mint": input_mint, "retries": 1}
+            else:
+                self.failed_sells[token_mint]["retries"] += 1
+  
     def retry_failed_sells(self):
         while self.running:
             time.sleep(10)
@@ -182,7 +214,7 @@ class OpenPositionTracker:
                     continue  
 
                 try:
-                    self.sell_and_update(token_mint, input_mint)
+                    self.sell_and_update(token_mint, input_mint, trigger="RETRY")
                     to_remove.append(token_mint)
                 except Exception as e:
                     self.failed_sells[token_mint]["retries"] += 1
@@ -190,3 +222,39 @@ class OpenPositionTracker:
 
             for token in to_remove:
                 self.failed_sells.pop(token, None)
+
+    def simulated_sell_and_log(self, row, executed_price_usd, trigger="SIM_TP_SL"):
+        try:
+            token_mint = row["Token_bought"]
+            input_mint = row["Token_sold"]
+            entry_price_sol = float(row["Real_Entry_Price"] if not pd.isna(row["Real_Entry_Price"]) else row["Quote_Price"])
+
+            sol_price_usd = float(self.solana_manager.get_token_prices([self.base_token])["data"][self.base_token]["price"])
+            entry_price_usd = row.get("Entry_USD", entry_price_sol * sol_price_usd)
+            pnl = ((executed_price_usd - entry_price_usd) / entry_price_usd) * 100
+
+            data = {
+                "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                "Token Mint": [token_mint],
+                "Entry_USD": [entry_price_usd],
+                "Exit_USD": [executed_price_usd],
+                "PnL (%)": [round(pnl, 2)],
+                "Sell_Signature": ["SIMULATED"],
+                "Buy_Signature": [row.get("Signature", "")],
+                "Type": ["SIMULATED_SELL"],
+                "Trigger": [trigger]
+            }
+
+            self.excel_utility.save_to_csv(
+                self.excel_utility.BOUGHT_TOKENS,
+                "simulated_closed_positions.csv",
+                data,
+            )
+
+            with self.tokens_lock:
+                self.tokens_to_remove.add(token_mint)
+
+            logger.info(f"✅ Simulated Sell for {token_mint} | Entry: ${entry_price_usd:.6f} | Exit: ${executed_price_usd:.6f} | PnL: {pnl:.2f}%")
+
+        except Exception as e:
+            logger.error(f"❌ Error during simulated sell: {e}")

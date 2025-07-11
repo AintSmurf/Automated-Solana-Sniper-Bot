@@ -12,7 +12,5 @@ BLACK_LIST = {
   "5Ymg9MwdKcQBY14STVyH5yPw4Ud34LrmNDAbQVtJpump"#Token LITTLE MANYU
   "GxnA29LqastdhHjnvPKncLbjrpWYCCDsXHnP4a7JhEfi,"#Token magnet
   "9WjAqEtYzXurAg6HuevY7bqJKk4ms5qQFAqeRwWRpump",#Token PUMP
-
-
 }
 

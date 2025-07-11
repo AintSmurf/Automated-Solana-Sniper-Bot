@@ -17,7 +17,6 @@ from config.dex_detection_rules import DEX_DETECTION_RULES
 from config.bot_settings import BOT_SETTINGS
 from helpers.framework_manager import load_trade_count,save_trade_count
 from config.blacklist import BLACK_LIST
-from helpers.framework_manager import convert_blocktime_to_readable_format,get_the_dif_between_unix_timestamps
 
 
 
@@ -160,16 +159,7 @@ class HeliusConnector:
                     return
                 if SIM_MODE:
                     logger.info(f"🧪 [SIM_MODE] Would BUY {token_mint} with ${TRADE_AMOUNT}")
-                    self.excel_utility.save_to_csv(
-                    self.excel_utility.TOKENS_DIR,
-                    f"sim_mode_tokens_{date_str}.csv",
-                    {
-                        "Timestamp": [f"{date_str} {time_str}"],
-                        "Signature": [signature],
-                        "Token Mint": [token_mint],
-                        "Liquidity (Estimated)": [liquidity],
-                    },
-                )
+                    self.solana_manager.buy("So11111111111111111111111111111111111111112", token_mint, TRADE_AMOUNT,SIM_MODE)
                 elif self.trade_count < MAXIMUM_TRADES:
                     self.solana_manager.buy("So11111111111111111111111111111111111111112", token_mint, TRADE_AMOUNT)
                     self.trade_count += 1

@@ -25,7 +25,6 @@ import re
 from helpers.rate_limiter import RateLimiter
 import time
 from config.bot_settings import BOT_SETTINGS
-from config.blacklist import BLACK_LIST
 
 
 
@@ -47,7 +46,7 @@ class SolanaHandler:
         self.excel_utility = ExcelUtility()
         self.helius_rate_limiter = rate_limiter
         jupiter_rl_settings = BOT_SETTINGS["RATE_LIMITS"]["jupiter"]
-        self.jupiter_rate_limiter = RateLimiter(min_interval=jupiter_rl_settings["min_interval"],jitter_range=jupiter_rl_settings["jitter_range"])
+        self.jupiter_rate_limiter = RateLimiter(min_interval=jupiter_rl_settings["min_interval"],jitter_range=jupiter_rl_settings["jitter_range"],max_requests_per_minute=jupiter_rl_settings["max_requests_per_minute"])
         self.transaction_simulation_paylod = get_payload("Transaction_simulation")
         self.swap_payload = get_payload("Swap_token_payload")
         self.liquidity_payload = get_payload("Liquidity_payload")
@@ -173,14 +172,12 @@ class SolanaHandler:
             logger.error(f"❌ Failed to create token account: {e}")
             return None
 
-    def buy(self, input_mint: str, output_mint: str, usd_amount: int) -> str:
-        if output_mint in BLACK_LIST:
-            logger.warning(f"⛔ Skipping {output_mint} — previously blacklisted due to high slippage/MEV.")
-            return
+    def buy(self, input_mint: str, output_mint: str, usd_amount: int, sim: bool = False) -> str:
+
         logger.info(f"🔄 Initiating buy for ${usd_amount} — Token: {output_mint}")
         try:
             token_amount = self.get_solana_token_worth_in_dollars(usd_amount)
-            quote = self.get_quote(input_mint, output_mint, token_amount,3)
+            quote = self.get_quote(input_mint, output_mint, token_amount, 3)
             if not quote:
                 logger.warning("⚠️ No quote received, aborting buy.")
                 return None
@@ -189,75 +186,48 @@ class SolanaHandler:
             quote_price = float(quote['outAmount']) / float(quote['inAmount'])
             logger.info(f"💡 Expected quote price: {quote_price:.10f}")
 
-            # 📊 Before balances
-            balances_before = self.get_account_balances()
-            before_wsol = next((b['balance'] for b in balances_before if b['token_mint'] == input_mint), 0)
-            before_token = next((b['balance'] for b in balances_before if b['token_mint'] == output_mint), 0)
+            self.add_token_account(output_mint)
 
-            # 🚀 Send buy txn
-            txn_64 = self.get_swap_transaction(quote)
-            self.send_transaction_payload["params"][0] = txn_64
-            self.send_transaction_payload["id"] = self.id
-            self.id += 1
-
-            response = self.helius_requests.post(
-                self.api_key["HELIUS_API_KEY"], payload=self.send_transaction_payload
-            )
-            logger.debug(f"Buy response: {response}")
-
+            #default data        
             now = datetime.now()
             date_str = now.strftime("%Y-%m-%d")
             time_str = now.strftime("%H:%M:%S")
 
             data = {
                 "Timestamp": [f"{date_str} {time_str}"],
-                "Token_price": [quote_price],
+                "Quote_Price": [quote_price],
                 "Token_sold": [input_mint],
                 "Token_bought": [output_mint],
-                "amount": [token_amount],
-                "USD": [usd_amount],
             }
-            real_entry_price = 0
-            wsol_spent = 0
-            slippage_pct = 0
-            after_wsol = 0
-            token_received = 0
-            
-            if "result" in response:
-                logger.info(f"✅ Buy SUCCESSFUL for {output_mint}")
+            if sim:
+                sol_price = self.get_sol_price()
+                real_entry_price = quote_price 
+                buy_price_usd = usd_amount 
 
-                # 🧾 After balances
-                time.sleep(1) 
-                balances_after = self.get_account_balances()
-                after_wsol = next((b['balance'] for b in balances_after if b['token_mint'] == input_mint), 0)
-                after_token = next((b['balance'] for b in balances_after if b['token_mint'] == output_mint), 0)
-
-                wsol_spent = max(0, before_wsol - after_wsol)
-                token_received = max(0, after_token - before_token)
-
-                if token_received > 0:
-                    real_entry_price = wsol_spent / token_received
-                    logger.info(f"📈 Real entry price: {real_entry_price:.10f} WSOL")
-                    slippage_pct = abs(1 - (real_entry_price / quote_price)) * 100
-                    if slippage_pct > 45:
-                        logger.warning(f"🚨 HIGH SLIPPAGE: {slippage_pct:.2f}% — sniped but likely MEV'd or rugged")
-                        BLACK_LIST.add(output_mint)
-                else:
-                    logger.warning("⚠️ No token received — possible front-run/rug.")
                 data.update({
-                "Real_Entry_Price": [real_entry_price],
-                "Token_Received": [token_received],
-                "WSOL_Spent": [wsol_spent],
-                "Slippage (%)": [round(slippage_pct, 2)],
-                "type": ["BUY"],
-                "Sold_At_Price": [0],
-                "SentToDiscord": [False],
-            })
-                self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"bought_tokens_{date_str}.csv", data)
-                self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"open_positions.csv", data)
-                self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"discord_{date_str}.csv", data)
+                    "type": ["SIMULATED_BUY"],
+                    "Real_Entry_Price": [real_entry_price], 
+                    "Token_Received": [0],
+                    "WSOL_Spent": [0],
+                    "Sold_At_Price": [0],
+                    "SentToDiscord": [False],
+                    "Signature": ["SIMULATED"],
+                    "Entry_USD": [buy_price_usd], 
+                })
+                self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"simulated_tokens.csv", data)
+                return "SIMULATED"
 
-            else:
+            # 🚀 Send transaction
+            txn_64 = self.get_swap_transaction(quote)
+            self.send_transaction_payload["params"][0] = txn_64
+            self.send_transaction_payload["id"] = self.id
+            self.id += 1
+            response = self.helius_requests.post(
+                self.api_key["HELIUS_API_KEY"], payload=self.send_transaction_payload
+            )
+            logger.debug(f"Buy response: {response}")
+
+            if "result" not in response:
                 logger.warning(f"❌ Buy FAILED for {output_mint}: {response['error'].get('message')}")
                 data.update({
                     "type": ["FAILED_BUY"],
@@ -265,8 +235,51 @@ class SolanaHandler:
                     "Error_Message": [response["error"]["message"]],
                 })
                 self.excel_utility.save_to_csv(self.excel_utility.TOKENS_DIR, f"failed_buys_{date_str}.csv", data)
+                return None
 
-            return response.get("result", None)
+            logger.info(f"✅ Buy SUCCESSFUL for {output_mint}")
+            buy_signature = response.get("result", None)
+            # ✅ Wait and poll for token balance
+            MAX_RETRIES = 5
+            WAIT_TIME = 2
+            token_received = 0
+
+            for attempt in range(MAX_RETRIES):
+                time.sleep(WAIT_TIME)
+                balances = self.get_account_balances()
+                token_info = next((b for b in balances if b['token_mint'] == output_mint), None)
+                if token_info and token_info['balance'] > 0:
+                    token_received = token_info['balance']
+                    logger.info(f"✅ Token received after buy: {token_received}")
+                    break
+                logger.warning(f"🔁 Attempt {attempt + 1}: Token not received yet...")
+
+            if token_received == 0:
+                logger.warning("⚠️ No token received — possible front-run/rug.")
+                return
+
+            # ✅ Estimated WSOL spent using SOL price
+            sol_price = self.get_sol_price()
+            wsol_spent = usd_amount / sol_price
+            real_entry_price = wsol_spent / token_received
+
+
+            data.update({
+                "Real_Entry_Price": [real_entry_price],
+                "Token_Received": [token_received],
+                "WSOL_Spent": [wsol_spent],
+                "type": ["BUY"],
+                "Sold_At_Price": [0],
+                "SentToDiscord": [False],
+                "Signature": [buy_signature],
+            })
+
+            # Save logs
+            self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"bought_tokens_{date_str}.csv", data)
+            self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"open_positions.csv", data)
+            self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"discord_{date_str}.csv", data)
+
+            return buy_signature
 
         except Exception as e:
             logger.error(f"❌ Exception during buy: {e}")
@@ -500,37 +513,33 @@ class SolanaHandler:
             logger.error(f"❌ Error fetching market cap: {e}")
             return 0
 
-    def sell(self, input_mint: str, output_mint: str, usd_amount: int = None) -> dict:
+    def sell(self, input_mint: str, output_mint: str) -> dict:
         logger.info(f"🔄 Initiating sell order: Selling {input_mint} for {output_mint}")
 
         try:
-            # Step 1: Get token balance
-            balances_before = self.get_account_balances()
-            token_info = next((t for t in balances_before if t["token_mint"] == input_mint), None)
-            before_wsol = next((t["balance"] for t in balances_before if t["token_mint"] == output_mint), 0)
-            before_token = token_info["balance"] if token_info else 0
-
-            if not token_info or before_token <= 0:
+            # 1. Get token balance
+            balances = self.get_account_balances()
+            token_info = next((t for t in balances if t["token_mint"] == input_mint), None)
+            if not token_info or token_info["balance"] <= 0:
                 logger.warning(f"⚠️ No balance found for token: {input_mint}")
                 return {"success": False, "executed_price": 0.0, "signature": ""}
 
             decimals = self.get_token_decimals(input_mint)
-            raw_amount = int(before_token * (10 ** decimals))
+            raw_amount = int(token_info["balance"] * (10 ** decimals))
 
-            # Step 2: Get swap quote
+            # 2. Get quote
             quote = self.get_quote(input_mint, output_mint, raw_amount)
             if not quote:
                 logger.warning("⚠️ Failed to get quote.")
                 return {"success": False, "executed_price": 0.0, "signature": ""}
 
-            # Step 3: Send transaction
+            # 3. Execute transaction
             txn_64 = self.get_swap_transaction(quote)
             self.send_transaction_payload["params"][0] = txn_64
             self.send_transaction_payload["id"] = self.id
             self.id += 1
 
             self.helius_rate_limiter.wait()
-
             response = self.helius_requests.post(
                 self.api_key["HELIUS_API_KEY"], payload=self.send_transaction_payload
             )
@@ -542,26 +551,12 @@ class SolanaHandler:
             signature = response["result"]
             logger.info(f"✅ Sell completed: Signature: {signature}")
 
-            # Step 4: Get post-balances
-            time.sleep(0.5)
-            balances_after = self.get_account_balances()
-            after_wsol = next((t["balance"] for t in balances_after if t["token_mint"] == output_mint), 0)
-            after_token = next((t["balance"] for t in balances_after if t["token_mint"] == input_mint), 0)
-
-            # Step 5: Calculate real result
-            token_sold = before_token - after_token
-            wsol_received = after_wsol - before_wsol
-
-            if token_sold > 0:
-                real_executed_price = wsol_received / token_sold
-                logger.info(f"💰 Real executed price: {real_executed_price:.10f}")
-            else:
-                logger.warning("⚠️ Could not detect token delta — possibly failed execution.")
-                real_executed_price = 0.0
+            # 4. Calculate executed price from quote
+            executed_price = float(quote["outAmount"]) / float(quote["inAmount"])
 
             return {
                 "success": True,
-                "executed_price": real_executed_price,
+                "executed_price": executed_price,
                 "signature": signature,
             }
 
