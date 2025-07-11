@@ -200,9 +200,7 @@ class SolanaHandler:
                 "Token_bought": [output_mint],
             }
             if sim:
-                sol_price = self.get_sol_price()
-                real_entry_price = quote_price 
-                buy_price_usd = usd_amount 
+                real_entry_price = usd_amount / float(quote["outAmount"])     
 
                 data.update({
                     "type": ["SIMULATED_BUY"],
@@ -212,7 +210,6 @@ class SolanaHandler:
                     "Sold_At_Price": [0],
                     "SentToDiscord": [False],
                     "Signature": ["SIMULATED"],
-                    "Entry_USD": [buy_price_usd], 
                 })
                 self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"simulated_tokens.csv", data)
                 return "SIMULATED"
@@ -259,15 +256,13 @@ class SolanaHandler:
                 return
 
             # ✅ Estimated WSOL spent using SOL price
-            sol_price = self.get_sol_price()
-            wsol_spent = usd_amount / sol_price
-            real_entry_price = wsol_spent / token_received
+            real_entry_price = usd_amount / token_received  
 
 
             data.update({
                 "Real_Entry_Price": [real_entry_price],
                 "Token_Received": [token_received],
-                "WSOL_Spent": [wsol_spent],
+                "WSOL_Spent": [usd_amount / self.get_sol_price()],  
                 "type": ["BUY"],
                 "Sold_At_Price": [0],
                 "SentToDiscord": [False],
