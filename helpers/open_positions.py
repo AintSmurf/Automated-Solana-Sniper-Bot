@@ -64,12 +64,12 @@ class OpenPositionTracker:
                         logger.warning(f"⚠️ Missing price data for {token_mint} or SOL.")
                         continue
 
-                    # 🟡 Entry price is in SOL
-                    buy_price_sol = float(row["Real_Entry_Price"] if "Real_Entry_Price" in row and not pd.isna(row["Real_Entry_Price"]) else row["Quote_Price"])
-
-                    # ✅ Convert entry price to USD using current SOL price
-                    sol_price_usd = float(price_data[self.base_token]["price"])
-                    buy_price_usd = buy_price_sol * sol_price_usd
+                    if "Entry_USD" in row and not pd.isna(row["Entry_USD"]):
+                        buy_price_usd = float(row["Entry_USD"])
+                    else:
+                        sol_price_usd = float(price_data[self.base_token]["price"])
+                        buy_price_sol = float(row["Real_Entry_Price"] if not pd.isna(row["Real_Entry_Price"]) else row["Quote_Price"])
+                        buy_price_usd = buy_price_sol * sol_price_usd
 
                     # ✅ Current token price from Jupiter is in USD
                     current_price_usd = float(price_data[token_mint]["price"])

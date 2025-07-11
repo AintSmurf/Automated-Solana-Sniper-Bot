@@ -200,22 +200,23 @@ class SolanaHandler:
                 "Token_bought": [output_mint],
             }
             if sim:
-                reverse_quote = self.get_quote(output_mint, input_mint, float(quote["outAmount"]), 3)
-                if not reverse_quote or float(reverse_quote["outAmount"]) == 0:
-                    logger.warning(f"❌ Reverse quote failed — simulation likely invalid for {output_mint}. Skipping.")
+                token_decimals = self.get_token_decimals(output_mint)
+                token_received = float(quote["outAmount"]) / (10 ** token_decimals)
+                if token_received == 0:
+                    logger.warning(f"❌ Quote gives 0 tokens, skipping simulation for {output_mint}")
                     return None
 
-                # Compute real USD/token based on reverse simulation
-                real_entry_price = float(reverse_quote["outAmount"]) / float(quote["outAmount"])
+                real_entry_price = usd_amount / token_received  
 
                 data.update({
                     "type": ["SIMULATED_BUY"],
                     "Real_Entry_Price": [real_entry_price], 
-                    "Token_Received": [0],
+                    "Token_Received": [token_received],
                     "WSOL_Spent": [0],
                     "Sold_At_Price": [0],
                     "SentToDiscord": [False],
                     "Signature": ["SIMULATED"],
+                    "Entry_USD": [real_entry_price],  # Optional
                 })
                 self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"simulated_tokens.csv", data)
                 return "SIMULATED"
@@ -261,14 +262,13 @@ class SolanaHandler:
                 logger.warning("⚠️ No token received — possible front-run/rug.")
                 return
 
-            # ✅ Estimated WSOL spent using SOL price
             real_entry_price = usd_amount / token_received  
 
-
             data.update({
-                "Real_Entry_Price": [real_entry_price],
+                "Real_Entry_Price": [real_entry_price],  
+                "Entry_USD": [real_entry_price],       
                 "Token_Received": [token_received],
-                "WSOL_Spent": [usd_amount / self.get_sol_price()],  
+                "WSOL_Spent": [usd_amount / self.get_sol_price()],
                 "type": ["BUY"],
                 "Sold_At_Price": [0],
                 "SentToDiscord": [False],
