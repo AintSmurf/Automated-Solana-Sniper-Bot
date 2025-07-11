@@ -52,9 +52,23 @@ class OpenPositionTracker:
                     continue
 
                 df = df[df["type"].isin(["BUY", "SIMULATED_BUY"])]
-                mints = df["Token_bought"].tolist() + [self.base_token]
-                price_data = self.solana_manager.get_token_prices(mints)["data"]
-                logger.debug(f"price data: {price_data}")
+                token_mints = df["Token_bought"].dropna().tolist()
+                mints = list(set(token_mints + [self.base_token]))
+
+                # If only one token is tracked (besides SOL), fetch both prices individually
+                if len(mints) == 2:
+                    try:
+                        token_price = self.solana_manager.get_token_price(token_mints[0])
+                        sol_price = self.solana_manager.get_token_price(self.base_token)
+                        price_data = {
+                            token_mints[0]: {"price": token_price},
+                            self.base_token: {"price": sol_price}
+                        }
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to fetch single token prices: {e}")
+                        continue
+                else:
+                    price_data = self.solana_manager.get_token_prices(mints)["data"]
 
                 for idx, row in df.iterrows():
                     token_mint = row["Token_bought"]
@@ -125,7 +139,7 @@ class OpenPositionTracker:
                     self.failed_sells[token_mint]["retries"] += 1
                 return
 
-            executed_price_usd = result["executed_price"]  # ✅ assumed USD
+            executed_price_usd = result["executed_price"] 
             signature = result.get("signature", "")
 
             try:
@@ -230,7 +244,11 @@ class OpenPositionTracker:
             entry_price_sol = float(row["Real_Entry_Price"] if not pd.isna(row["Real_Entry_Price"]) else row["Quote_Price"])
 
             sol_price_usd = float(self.solana_manager.get_token_prices([self.base_token])["data"][self.base_token]["price"])
-            entry_price_usd = row.get("Entry_USD", entry_price_sol * sol_price_usd)
+            if "Entry_USD" in row and not pd.isna(row["Entry_USD"]):
+                entry_price_usd = float(row["Entry_USD"])
+            else:
+                entry_price_usd = entry_price_sol * sol_price_usd
+
             pnl = ((executed_price_usd - entry_price_usd) / entry_price_usd) * 100
 
             data = {
@@ -258,3 +276,4 @@ class OpenPositionTracker:
 
         except Exception as e:
             logger.error(f"❌ Error during simulated sell: {e}")
+
