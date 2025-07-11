@@ -200,7 +200,13 @@ class SolanaHandler:
                 "Token_bought": [output_mint],
             }
             if sim:
-                real_entry_price = usd_amount / float(quote["outAmount"])     
+                reverse_quote = self.get_quote(output_mint, input_mint, float(quote["outAmount"]), 3)
+                if not reverse_quote or float(reverse_quote["outAmount"]) == 0:
+                    logger.warning(f"❌ Reverse quote failed — simulation likely invalid for {output_mint}. Skipping.")
+                    return None
+
+                # Compute real USD/token based on reverse simulation
+                real_entry_price = float(reverse_quote["outAmount"]) / float(quote["outAmount"])
 
                 data.update({
                     "type": ["SIMULATED_BUY"],
