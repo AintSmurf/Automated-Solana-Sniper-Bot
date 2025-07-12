@@ -24,15 +24,17 @@ class OpenPositionTracker:
         self.max_retries = 3
         self.tokens_to_remove = set()
         self.tokens_lock = threading.Lock()
+        
+        #check bot mode
         self.file_path = os.path.join(self.excel_utility.BOUGHT_TOKENS, "open_positions.csv")
-
-    def track_positions(self):
-        logger = LoggingHandler.get_logger()
-        logger.info("📚 Starting to track open positions from Excel...")
         if BOT_SETTINGS["SIM_MODE"]:
             self.file_path = os.path.join(self.excel_utility.BOUGHT_TOKENS, "simulated_tokens.csv")
 
-        while self.running:
+    def track_positions(self,stop_event):
+        logger = LoggingHandler.get_logger()
+        logger.info("📚 Starting to track open positions from Excel...")
+
+        while not stop_event.is_set() or self.has_open_positions():
             if not os.path.exists(self.file_path):
                 logger.debug("📭 Waiting for buy file to be created...")
                 time.sleep(1)
@@ -197,11 +199,11 @@ class OpenPositionTracker:
             else:
                 self.failed_sells[token_mint]["retries"] += 1
   
-    def retry_failed_sells(self):
-        while self.running:
-            time.sleep(10)
-
+    def retry_failed_sells(self,stop_event):
+        
+        while not stop_event.is_set() or self.has_failed_sells():
             if not self.failed_sells:
+                time.sleep(5)
                 continue
 
             logger.info(f"🔁 Retrying {len(self.failed_sells)} failed sells...")
@@ -233,6 +235,7 @@ class OpenPositionTracker:
                 except Exception as e:
                     self.failed_sells[token_mint]["retries"] += 1
                     logger.error(f"❌ Retry #{retries} failed for {token_mint}: {e}")
+                time.sleep(2)
 
             for token in to_remove:
                 self.failed_sells.pop(token, None)
@@ -277,3 +280,19 @@ class OpenPositionTracker:
         except Exception as e:
             logger.error(f"❌ Error during simulated sell: {e}")
 
+    def has_open_positions(self):
+        try:
+            if not os.path.exists(self.file_path):
+                return False
+
+            df = pd.read_csv(self.file_path)
+            df = df[df["type"].isin(["BUY", "SIMULATED_BUY"])]
+            return not df.empty
+
+        except Exception as e:
+            logger.error(f"❌ Error checking open positions: {e}")
+            return True 
+
+    def has_failed_sells(self):
+        with self.tokens_lock:
+            return len(self.failed_sells) > 0

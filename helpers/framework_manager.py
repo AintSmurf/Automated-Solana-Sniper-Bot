@@ -3,11 +3,11 @@ import json
 from config.bot_settings import BOT_SETTINGS
 from datetime import datetime, timezone,timedelta
 
-TRADE_COUNT_FILE = "trade_count.json"
 
 def convert_blocktime_to_readable_format(blocktime):
     readble_fomrat = datetime.fromtimestamp(blocktime).strftime('%H:%M:%S')
     return readble_fomrat
+
 def get_the_dif_between_unix_timestamps(current_time, unix_timestamp):
     return current_time - unix_timestamp
     
@@ -49,15 +49,6 @@ def validate_bot_settings():
     return True
 
 
-def load_trade_count():
-    if os.path.exists(TRADE_COUNT_FILE):
-        with open(TRADE_COUNT_FILE, "r") as f:
-            return json.load(f).get("count", 0)
-    return 0
-
-def save_trade_count(count):
-    with open(TRADE_COUNT_FILE, "w") as f:
-        json.dump({"count": count}, f)
 
 
 

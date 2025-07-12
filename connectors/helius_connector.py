@@ -15,8 +15,8 @@ from utilities.rug_check_utility import RugCheckUtility
 import threading
 from config.dex_detection_rules import DEX_DETECTION_RULES
 from config.bot_settings import BOT_SETTINGS
-from helpers.framework_manager import load_trade_count,save_trade_count
 from config.blacklist import BLACK_LIST
+from helpers.trade_counter import TradeCounter
 
 
 
@@ -30,21 +30,20 @@ signature_cache = deque(maxlen=20000)
 #to clear
 signature_to_token_mint = {}
 
-#to track flow_time
-flow_timer_by_token = {} 
-
 
 known_tokens = set()
 MAX_TOKEN_AGE_SECONDS = BOT_SETTINGS["MAX_TOKEN_AGE_SECONDS"]
 MIN_TOKEN_LIQUIDITY = BOT_SETTINGS["MIN_TOKEN_LIQUIDITY"]
-MAXIMUM_TRADES =BOT_SETTINGS["MAXIMUM_TRADES"]
 TRADE_AMOUNT=BOT_SETTINGS["TRADE_AMOUNT"]
 SIM_MODE = BOT_SETTINGS["SIM_MODE"]
 
 
 
 class HeliusConnector:
-    def __init__(self, devnet=False,rate_limiter=None, API=None):
+    def __init__(self, rate_limiter, trade_counter:TradeCounter, stop_ws, stop_fetcher, devnet=False):
+        self.stop_ws = stop_ws
+        self.stop_fetcher = stop_fetcher
+        self.trade_counter = trade_counter
         self.helius_rate_limiter = rate_limiter 
         logger.info("Initializing Helius WebSocket connection...")
         credentials_utility = CredentialsUtility()
@@ -54,7 +53,6 @@ class HeliusConnector:
         self.requests_utility = RequestsUtility(HELIUS_URL["BASE_URL"])
         self.api_key = credentials_utility.get_helius_api_key()
         self.dex_name = credentials_utility.get_dex()["DEX"]     
-        self.trade_count = load_trade_count()
         self.rpc_call_counter = 0 
         self.transaction_timers = {}
         self.flow_timer_by_token = {} 
@@ -157,20 +155,28 @@ class HeliusConnector:
                     logger.warning(f"❌ Scam check failed — skipping {token_mint}")
                     self.cleanup(token_mint)
                     return
-                if SIM_MODE:
+                if SIM_MODE and not self.trade_counter.reached_limit():
                     logger.info(f"🧪 [SIM_MODE] Would BUY {token_mint} with ${TRADE_AMOUNT}")
-                    self.solana_manager.buy("So11111111111111111111111111111111111111112", token_mint, TRADE_AMOUNT,SIM_MODE)
-                elif self.trade_count < MAXIMUM_TRADES:
-                    self.solana_manager.buy("So11111111111111111111111111111111111111112", token_mint, TRADE_AMOUNT)
-                    self.trade_count += 1
-                    save_trade_count(self.trade_count)
+                    self.solana_manager.buy(
+                        "So11111111111111111111111111111111111111112",
+                        token_mint,
+                        TRADE_AMOUNT,
+                        SIM_MODE
+                    )
+                    self.trade_counter.increment()
+                elif not self.trade_counter.reached_limit():
+                    self.solana_manager.buy(
+                        "So11111111111111111111111111111111111111112",
+                        token_mint,
+                        TRADE_AMOUNT
+                    )
+                    self.trade_counter.increment()
                 else:
-                    logger.critical("💥 MAXIMUM_TRADES reached — exiting bot to prevent overtrading.")
-                    exit(1)
+                    logger.critical("💥 MAXIMUM_TRADES reached — skipping trade.")
                 logger.info(f"🚀 LIQUIDITY passed: ${liquidity:.2f} — considering buy for {token_mint} transaction signature:{signature}")
                 
                 #calculate flow time
-                start_time = flow_timer_by_token.pop(token_mint, None)
+                start_time = self.flow_timer_by_token.pop(token_mint, None)
                 if start_time:
                     duration = time.time() - start_time
                     logger.info(f"🕒 Flow duration for {token_mint}: {duration:.2f} seconds")
@@ -190,7 +196,7 @@ class HeliusConnector:
             logger.error(f"❌ Error processing transaction logic: {e}", exc_info=True)
 
     def run_transaction_fetcher(self):
-        while True:
+        while not self.stop_fetcher.is_set():
             if not signature_queue:
                 continue
 
@@ -216,6 +222,7 @@ class HeliusConnector:
     def start_ws(self) -> None:
         """Starts the WebSocket connection to Helius RPC."""
         logger.info(f"Connecting to WebSocket: {self.wss_url}")
+        
         self.ws = websocket.WebSocketApp(
             self.wss_url,
             on_open=self.on_open,
@@ -223,7 +230,20 @@ class HeliusConnector:
             on_error=self.on_error,
             on_close=self.on_close,
         )
-        self.ws.run_forever()
+
+        while not self.stop_ws.is_set():
+            try:
+                self.ws.run_forever()
+            except Exception as e:
+                logger.error(f"❌ WebSocket error: {e}")
+            
+            if not self.stop_ws.is_set():
+                logger.warning("WebSocket connection closed. Reconnecting in 5s...")
+                try:
+                    self.ws.close()
+                except Exception as e:
+                    logger.error(f"❌ Error while closing WebSocket: {e}")
+                time.sleep(5)
 
     def on_open(self, ws) -> None:
         """Subscribe to logs for new liquidity pools on solana."""
@@ -452,10 +472,12 @@ class HeliusConnector:
         return None
    
     def _start_flow_timer(self,token_mint):
-        flow_timer_by_token[token_mint] = time.time()
+        if token_mint not in self.flow_timer_by_token:
+            self.flow_timer_by_token[token_mint] = time.time()
 
     def _start_detection_timer(self, token_mint: str):
-        self.transaction_timers[token_mint] = time.time()
+        if token_mint not in self.transaction_timers:
+            self.transaction_timers[token_mint] = time.time()
 
     def _get_token_age(self, token_mint: str) -> float | None:
         start = self.transaction_timers.get(token_mint)
