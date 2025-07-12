@@ -52,10 +52,10 @@ def main():
     )
 
     # Launch threads
-    threading.Thread(target=helius_connector.start_ws, args=(stop_ws,), daemon=True).start()
+    threading.Thread(target=helius_connector.start_ws, daemon=True).start()
     logger.info("🚀 WebSocket Started")
 
-    threading.Thread(target=helius_connector.run_transaction_fetcher, args=(stop_fetcher,), daemon=True).start()
+    threading.Thread(target=helius_connector.run_transaction_fetcher, daemon=True).start()
     logger.info("✅ Transaction fetcher started")
 
     threading.Thread(target=tracker.track_positions, args=(stop_tracker,), daemon=True).start()
