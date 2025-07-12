@@ -173,6 +173,7 @@ class HeliusConnector:
                     self.trade_counter.increment()
                 else:
                     logger.critical("💥 MAXIMUM_TRADES reached — skipping trade.")
+                    signature_queue.clear()
                 logger.info(f"🚀 LIQUIDITY passed: ${liquidity:.2f} — considering buy for {token_mint} transaction signature:{signature}")
                 
                 #calculate flow time
@@ -198,6 +199,7 @@ class HeliusConnector:
     def run_transaction_fetcher(self):
         while not self.stop_fetcher.is_set():
             if not signature_queue:
+                time.sleep(0.4)
                 continue
 
             logger.info(
@@ -363,10 +365,10 @@ class HeliusConnector:
         logger.error(f"WebSocket error: {error}")
 
     def on_close(self, ws, close_status_code, close_msg) -> None:
-        """Handles WebSocket disconnection."""
-        logger.warning("WebSocket connection closed. Reconnecting in 5s...")
-        time.sleep(5)
-        self.start_ws()  # Auto-reconnect
+        if self.stop_ws.is_set():
+                logger.info("🛑 WebSocket closed and shutdown flag is set. Not reconnecting.")
+                return
+        logger.warning(f"WebSocket connection closed. Reconnecting in 5s...\ncode:{close_status_code}, msg:{close_msg}")
 
     def _get_block_time(self,slot):
         self.block_time_payload["id"] = self.id
