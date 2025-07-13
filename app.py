@@ -12,11 +12,11 @@ from helpers.trade_counter import TradeCounter
 
 # set up logger
 logger = LoggingHandler.get_logger()
+discord_bot = Discord_Bot()
 
 
 def start_discord_bot():
-    ds = Discord_Bot()
-    asyncio.run(ds.run())
+    asyncio.run(discord_bot.run())
 
 def main():
     
@@ -83,9 +83,14 @@ def main():
                 logger.info("✅ All trades completed and positions cleared. Stopping all threads.")
                 stop_tracker.set()
                 stop_retry.set()
+                try:
+                    asyncio.run(discord_bot.shutdown())
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to shut down Discord bot cleanly: {e}")
                 break
 
     logger.info("🛑 Bot shutdown complete.")
+    exit(0)
 
 if __name__ == "__main__":
     try:

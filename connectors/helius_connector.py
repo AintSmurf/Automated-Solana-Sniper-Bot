@@ -71,6 +71,7 @@ class HeliusConnector:
         self.transaction_simulation_payload = get_payload("Transaction_simulation")
         self.token_address_payload = get_payload("Token_adress_payload")
         self.block_time_payload = get_payload("Blocktime_payload")
+        self.metadata = get_payload("Asset_payload")
 
     def fetch_transaction(self, signature: str, tx_data=None):
         logger.info(f"Fetching transaction details for: {signature}")

@@ -140,3 +140,8 @@ class Discord_Bot:
     async def run(self):
         asyncio.create_task(self.watch_excel_for_updates())
         await self.bot.start(self.token["DISCORD_TOKEN"])
+
+    async def shutdown(self):
+        """Gracefully shut down the Discord bot."""
+        logger.info("👋 Shutting down Discord bot...")
+        await self.bot.close()
