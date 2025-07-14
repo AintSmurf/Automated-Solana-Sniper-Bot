@@ -14,12 +14,13 @@ It connects directly to **Helius WebSocket logs** to monitor real-time token min
 
 - [Prerequisites](#prerequisites)  
 - [Features](#features)  
-- [Requirements](#requirements)  
+- [Requirements](#requirements)
+- [Config Files Overview](#config-files-overview)  
 - [Installation](#installation)  
 - [Running the Bot](#running-the-bot)  
 - [Roadmap](#roadmap)  
 - [Log Management](#log-management)
-- [Log Summarization Tool](#-log-summarization-tool-analyzepy)
+- [Log Summarization Tool (`run_analyze.py`)](#log-summarization-tool)
 - [Disclaimer](#disclaimer)  
 - [License](#license)
 
@@ -31,7 +32,7 @@ You'll need the following before running the bot:
 
 - A funded **Solana wallet**
 - A **Helius API Key** (WebSocket + REST access)
-- A **Jupiter API key** — price & swaps
+- A **SOLANA_PRIVATE_KEY** — wallet key
 - A **Discord bot token** — for notifications
 - *(Optional- not used in the bot itself yet)* **BirdEye API Key** (for liquidity & price fallback)
 
@@ -43,7 +44,7 @@ You'll need the following before running the bot:
   - Captures new tokens via Helius WebSocket
 
 - 📊 **Excel Logging System**  
-  - `all_tokens_found.csv` — Every detected token with liquidity > 1000
+  - `all_tokens_found.csv` — Every detected token with liquidity > 1500
   - `safe_tokens_YYYY-MM-DD.csv` — Tokens that passed full post-buy safety checks
   - `bought_tokens_YYYY-MM-DD.csv` — Simulated or executed buy transactions  
   - `scam_tokens_YYYY-MM-DD.csv` — Tokens flagged as scam/risky after checks
@@ -71,7 +72,7 @@ You'll need the following before running the bot:
 - 🧵 **Threaded Execution**
   - WebSocket, transaction fetcher, position_tracker, and Discord bot run concurrently
 
-- 🧠 **Log Summarization Script (`analyze.py`)**  
+- 🧠 **Log Summarization Script (`run_analyze.py`)**  
   - Extracts time-sorted logs per token for deep analysis
   - Removes duplicates, merges info/debug, and creates human-readable `.log` files
 
@@ -85,6 +86,19 @@ You'll need the following before running the bot:
   `solana`, `solders`, `pandas`, `requests`, `websocket-client`
 
 ---
+## 🧩 Config Files Overview
+
+The bot is modular and settings are managed through configuration files:
+
+| File | Purpose |
+|------|---------|
+| `config/bot_settings.py` | Core parameters (TP/SL, liquidity threshold, SIM mode, rate limits) |
+| `config/dex_detection_rules.py` | Per-DEX rules for token validation |
+| `config/blacklist.py` | Known scam or blocked token addresses |
+| `config/credentials.sh` / `.ps1` | Stores API keys and private key environment exports |
+
+Make sure to customize these to match your risk level and DEX preferences.
+
 
 ## 🔧 Installation
 
@@ -118,38 +132,44 @@ Edit or export these values in `credentials` or credentials utility script:
 ```env
 HELIUS_API_KEY=your_helius_api_key
 SOLANA_PRIVATE_KEY=your_base58_private_key
+DISCORD_TOKEN=your_discord_bot_token
 BIRD_EYE_API_KEY=your_birdeye_key (optional)
-DISCORD_TOKEN=your_discord_bot_token (optional)
 DEX="Pumpfun" or "Raydium"
 ```
 ### 5. Configure bot settings `bot_settings.py`
 ```env
+BOT_SETTINGS = {
     # Minimum liquidity required (in USD) to consider a token worth evaluating/trading
     "MIN_TOKEN_LIQUIDITY": 1500,
 
     # Maximum age (in seconds) of a newly minted token for it to be considered "fresh"
-    "MAX_TOKEN_AGE_SECONDS": 180,
+    "MAX_TOKEN_AGE_SECONDS": 40,
 
-    # Amount (in USD) the bot would hypothetically use to trade per token
+    # Amount (in USD) the bot would hypothetically use to simulate a trade per token
     "TRADE_AMOUNT": 10,
     
-    #MAXIMUM TRADES
-    "MAXIMUM_TRADES": 10,
+    # MAXIMUM_TRADES limits how many tokens the bot will attempt to trade before stopping.
+    # This acts as a pain-control mechanism to avoid overtrading or unexpected loops.
+    "MAXIMUM_TRADES": 20,  # ☠️ Fail-safe: Change this if you want more/less trades per session
+
+
+    # flag for toggling real vs simulated trading 
+    "SIM_MODE": True,
 
     # Take profit multiplier — e.g., 1.3 means +30% from entry price
-    "TP": 1.3,
+    "TP": 4.0,
 
     # Stop loss multiplier — e.g., 0.95 means -5% from entry price
-    "SL": 0.95,
+    "SL": 0.5,
 
     # Rate limiting configuration for different APIs to avoid throttling or bans
     "RATE_LIMITS": {
         "helius": {
             # Minimum time between two requests to Helius API (in seconds)
-            "min_interval": 0.1,
+            "min_interval": 0.02,
 
             # Random delay added to each Helius request (to avoid burst patterns)
-            "jitter_range": (0.01, 0.02),
+            "jitter_range": (0.005, 0.01),
         },
         "jupiter": {
             # Minimum time between two requests to Jupiter API (in seconds)
@@ -157,8 +177,12 @@ DEX="Pumpfun" or "Raydium"
 
             # Random delay added to each Jupiter request (to avoid burst patterns)
             "jitter_range": (0.05, 0.15),
+            
+            # max requests per second
+            "max_requests_per_minute": 60 
         }
     },
+}
 ```
 
 Linux/macOS:
@@ -174,6 +198,9 @@ Windows:
 ---
 
 ## ▶️ Running the Bot
+
+> ⚠️ WARNING: If `SIM_MODE` is set to `False`, the bot will perform **real trades** on Solana using your private key.
+> 🧯 **Fail-Safe Notice:** The bot includes a `MAXIMUM_TRADES` limit (default 20) to stop execution once too many trades occur. You can raise/lower this value in `bot_settings.py`.
 
 ```bash
 python app.py
@@ -191,8 +218,8 @@ This will launch:
   ```env
     HELIUS_API_KEY=your_helius_api_key
     SOLANA_PRIVATE_KEY=your_base58_private_key
+    DISCORD_TOKEN=your_discord_bot_token 
     BIRD_EYE_API_KEY=your_birdeye_key (optional)
-    DISCORD_TOKEN=your_discord_bot_token (optional)
     DEX="Pumpfun" or "Raydium"
     ```
     - Step 2: Build the Docker image
@@ -210,8 +237,8 @@ This will launch:
 |--------|--------|
 | ✅ Real-Time Detection via WebSocket | Completed |
 | ✅ Anti-Scam Filtering | Completed |
-| ✅ Buy/Sell via Jupiter | ✅ Testing |
-| ↺ Auto Buy Mode | ✅ Testing |
+| ✅ Buy/Sell via Jupiter | Completed |
+| ✅ Auto Buy Mode | Completed |
 | 📲 Telegram Notifications | Planned |
 | 📝 SQLite Logging (instead of CSV) | Planned |
 | 💻 Web Dashboard / Windows GUI | Planned |
@@ -232,7 +259,7 @@ Logs are organized for clarity and traceability:
 ---
 ---
 
-## 🧠 Log Summarization Tool (`analyze.py`)
+## 🧠 Log Summarization Tool
 
 This tool allows you to extract, clean, and analyze logs for a specific token address and transaction signature.
 

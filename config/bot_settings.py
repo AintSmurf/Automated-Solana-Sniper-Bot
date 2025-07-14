@@ -12,7 +12,7 @@ BOT_SETTINGS = {
     "MAXIMUM_TRADES": 20,
 
     # flag for toggling real vs simulated trading 
-    "SIM_MODE": False,
+    "SIM_MODE": True,
 
     # Take profit multiplier — e.g., 1.3 means +30% from entry price
     "TP": 4.0,
