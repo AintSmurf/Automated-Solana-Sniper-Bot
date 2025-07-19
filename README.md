@@ -12,8 +12,8 @@ It connects directly to **Helius WebSocket logs** to monitor real-time token min
 
 ## 📚 Table of Contents
 
-- [Prerequisites](#prerequisites)  
-- [Features](#features)  
+- [Prerequisites](#Prerequisites)  
+- [Features](#✨ Features)  
 - [Requirements](#requirements)
 - [Config Files Overview](#config-files-overview)  
 - [Installation](#installation)  
