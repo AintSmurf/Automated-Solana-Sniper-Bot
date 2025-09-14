@@ -32,8 +32,30 @@ class DexscannerUtility:
         info = self.requests_utility.get(url)
         print(info)
 
-    def get_token_pair_address(self, chain_id, tokenAddress):
-        logger.info("Retriving token pair address ...")
-        url = self.pool + f"/{chain_id}/{tokenAddress}"
+    def get_token_pair_address(self, chain_id: str, token_address: str, dex_id: str = None) -> dict:
+        """
+        Retrieve token pair address from dexscreener.
+        If dex_id is provided, return only that DEX entry (e.g. pumpswap, raydium, meteora).
+        Otherwise return the first available.
+        """
+        logger.info(f"Retrieving token pair address for {token_address} on {chain_id} (dex={dex_id})...")
+        url = f"{self.pool}/{chain_id}/{token_address}"
         info = self.requests_utility.get(url)
-        return info
+
+        if not info:
+            logger.warning(f"⚠️ No pair info found for {token_address}")
+            return {}
+
+        chosen = None
+        if dex_id:
+            chosen = next((entry for entry in info if entry.get("dexId") == dex_id), None)
+
+        if not chosen:  # fallback to first entry
+            chosen = info[0]
+
+        return {
+            "base": [chosen["baseToken"]["address"]],
+            "quoteToken": [chosen["quoteToken"]["address"]],
+            "pool_address": [chosen["pairAddress"]],
+            "dex_id": chosen["dexId"],
+        }

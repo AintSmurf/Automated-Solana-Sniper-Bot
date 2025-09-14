@@ -24,7 +24,7 @@ class TradeCounter:
         with self.lock:
             return self.count >= self.max_trades
 
-    def get(self):
+    def get_trades_count(self):
         with self.lock:
             return self.count
 

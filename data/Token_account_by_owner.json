@@ -1,0 +1,13 @@
+{
+    "jsonrpc": "2.0",
+    "id": "ID_PLACEHOLDER",
+    "method": "getTokenAccountsByOwnerV2",
+    "params": [
+        "POOL_ADDRESS_PLACE_HOLDER",
+        { "programId": "SPL_TOKEN_PROGRAM_ID_PLACE_HOLDER"},
+        {
+            "encoding": "jsonParsed",
+            "limit": 1000
+        }
+    ]
+}
