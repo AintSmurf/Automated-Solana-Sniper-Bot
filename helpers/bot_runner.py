@@ -15,6 +15,7 @@ def prepare_settings(headless=False):
     """Load settings, optionally run UI/CLI prompts, and validate."""
     settings = load_settings()
     if headless:
+        settings["UI_MODE"] = False
         validate_bot_settings(settings)
         return settings
 

@@ -343,6 +343,7 @@ class SniperBotUI(tk.Tk):
         # Settings
         rows = {
             "Mode": "SIM" if self.settings["SIM_MODE"] else "REAL",
+            "SLIPPAGE":f"{self.settings['SLPG']}",
             "TP": f"{self.settings['TP']}",
             "SL": self.settings["SL"],
             "TSL": self.settings["TRAILING_STOP"],

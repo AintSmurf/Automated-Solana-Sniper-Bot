@@ -90,6 +90,7 @@ class SettingsConfigUI(tk.Toplevel):
         risk_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=20, pady=10)
         row += 1
 
+        self._add_entry(risk_frame, "SLPG", self.settings["SLPG"], "Maximum slippage tolerance (as a fraction).")
         self._add_entry(risk_frame, "TP", self.settings["TP"], "Take-profit multiplier.")
         self._add_entry(risk_frame, "SL", self.settings["SL"], "Emergency stop-loss threshold.")
         self._add_entry(risk_frame, "TRAILING_STOP", self.settings["TRAILING_STOP"], "Trailing stop-loss % from peak.")

@@ -17,10 +17,11 @@ DEFAULT_SETTINGS = {
     "TIMEOUT_PROFIT_THRESHOLD": 1.03,
 
     # Trading logic thresholds
-    "TP": 4.0,                              # Take profit multiplier
-    "SL": 0.25,                             # Emergency SL threshold
-    "TRAILING_STOP": 0.2,                   # TSL % drop from peak
-    "MIN_TSL_TRIGGER_MULTIPLIER": 1.5,      # TSL only after 1.5x pump
+    "SLPG":3.0,
+    "TP": 4.0,                              
+    "SL": 0.25,                             
+    "TRAILING_STOP": 0.2,                   
+    "MIN_TSL_TRIGGER_MULTIPLIER": 1.5,      
 
     # ✅ Exit rule toggles
     "EXIT_RULES": {

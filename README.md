@@ -222,6 +222,7 @@ python app.py --s or python app.py --server
     "TIMEOUT_PROFIT_THRESHOLD": 1.03, # If < +3% profit → force exit
 
     # Take profit and stop loss rules
+    "SLPG": 3.0,                      # Maximum slippage tolerance (as a fraction) Example: 0.03 = 3% price difference allowed between quote and execution.
     "TP": 4.0,                        # +300% (4x entry)
     "SL": 0.25,                       # 25% drop from entry
     "TRAILING_STOP": 0.2,             # 20% below peak price

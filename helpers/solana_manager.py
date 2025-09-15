@@ -28,11 +28,8 @@ from config.settings import get_bot_settings
 from helpers.volume_tracker import VolumeTracker
 from spl.token.constants import TOKEN_PROGRAM_ID as SPL_TOKEN_PROGRAM_ID
 from config.dex_detection_rules import PUMPFUN_PROGRAM_ID,RAYDIUM_PROGRAM_ID,KNOWN_BASES
-
-
-
-
-
+import threading
+from config.settings import load_settings
 
 
 
@@ -50,6 +47,7 @@ class SolanaManager:
         self.rug_check_utility = RugCheckUtility()
         self.excel_utility = ExcelUtility()
         self.helius_rate_limiter = rate_limiter
+        self.settings = load_settings()
         self.volume_tracker = VolumeTracker()
         self.prepare_json_files()
         BOT_SETTINGS = get_bot_settings()
@@ -87,38 +85,35 @@ class SolanaManager:
         logger.debug(f"Fetching token balances for wallet: {self.wallet_address}")
 
         try:
-            sol_balance_response = self.client.get_balance(self.wallet_address)
-            sol_balance = sol_balance_response.value / (10**9)
-            response = self.client.get_token_accounts_by_owner(
-                self.wallet_address,
-                TokenAccountOpts(
-                    program_id=Pubkey.from_string(
-                        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-                    ),
-                    encoding="base64",
-                ),
-            )
-            logger.debug(f"Solana RPC Response: {response}")
-
-            if not response.value:
-                logger.warning("⚠️ No token accounts found.")
-                return [{"token_mint": "SOL", "balance": sol_balance}]
+            # Call your existing Helius wrapper
+            accounts = self.get_token_accounts_by_owner(str(self.wallet_address))
 
             token_balances = []
-            for token in response.value:
+            for acc in accounts:
                 try:
-                    account_data = bytes(token.account.data)
-                    mint_pubkey = Pubkey(account_data[:32])
-                    raw_amount = struct.unpack("<Q", account_data[64:72])[0]
-                    token_info = self.client.get_token_supply(mint_pubkey)
-                    decimals = token_info.value.decimals
-                    balance = raw_amount / (10**decimals)
-                    token_balances.append(
-                        {"token_mint": str(mint_pubkey), "balance": balance}
-                    )
+                    mint = acc.get("mint")
+                    amount = int(acc.get("amount", 0))
+                    decimals = int(acc.get("decimals", 0))
+                    balance = amount / (10 ** decimals) if decimals > 0 else amount
+
+                    token_balances.append({
+                        "token_mint": mint,
+                        "balance": balance
+                    })
                 except Exception as inner_e:
-                    logger.error(f"❌ Error processing token {token.pubkey}: {inner_e}")
-            token_balances.insert(0, {"token_mint": "SOL", "balance": sol_balance})
+                    logger.error(f"❌ Error processing token account {acc}: {inner_e}")
+
+            # Add SOL balance
+            try:
+                sol_balance_response = self.client.get_balance(self.wallet_address)
+                sol_balance = sol_balance_response.value / (10 ** 9)
+                token_balances.insert(0, {"token_mint": "SOL", "balance": sol_balance})
+            except Exception as sol_e:
+                logger.warning(f"⚠️ Could not fetch SOL balance: {sol_e}")
+
+            # Optionally filter out zero balances
+            token_balances = [b for b in token_balances if b["balance"] > 0]
+
             logger.info(f"✅ Retrieved {len(token_balances)} token balances.")
             logger.debug(f"Token Balances: {token_balances}")
 
@@ -191,8 +186,8 @@ class SolanaManager:
 
         logger.info(f"🔄 Initiating buy for ${usd_amount} — Token: {output_mint}")
         try:
-            token_amount = self.get_solana_token_worth_in_dollars(usd_amount)
-            quote = self.get_quote(input_mint, output_mint, token_amount, 3)
+            token_amount = self.get_solana_token_worth_in_dollars(usd_amount)       
+            quote = self.get_quote(input_mint, output_mint, token_amount,self.settings["SLPG"])
             if not quote:
                 logger.warning("⚠️ No quote received, aborting buy.")
                 return None
@@ -253,36 +248,18 @@ class SolanaManager:
                     "Error_Code": [response["error"]["code"]],
                     "Error_Message": [response["error"]["message"]],
                 })
-                self.excel_utility.save_to_csv(self.excel_utility.TOKENS_DIR, f"failed_buys_{date_str}.csv", data)
+                self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"failed_buys_{date_str}.csv", data)
                 return None
 
             logger.info(f"✅ Buy SUCCESSFUL for {output_mint}")
             buy_signature = response.get("result", None)
-            # ✅ Wait and poll for token balance
-            MAX_RETRIES = 5
-            WAIT_TIME = 2
-            token_received = 0
 
-            for attempt in range(MAX_RETRIES):
-                time.sleep(WAIT_TIME)
-                balances = self.get_account_balances()
-                token_info = next((b for b in balances if b['token_mint'] == output_mint), None)
-                if token_info and token_info['balance'] > 0:
-                    token_received = token_info['balance']
-                    logger.info(f"✅ Token received after buy: {token_received}")
-                    break
-                logger.warning(f"🔁 Attempt {attempt + 1}: Token not received yet...")
-
-            if token_received == 0:
-                logger.warning("⚠️ No token received — possible front-run/rug.")
-                return
-
-            real_entry_price = usd_amount / token_received  
-
+            # Start tracking immediately with quote_price (approx)
+            real_entry_price = quote_price
             data.update({
-                "Real_Entry_Price": [real_entry_price],  
-                "Entry_USD": [real_entry_price],       
-                "Token_Received": [token_received],
+                "Real_Entry_Price": [real_entry_price],
+                "Entry_USD": [real_entry_price],
+                "Token_Received": [0],  # will update later
                 "WSOL_Spent": [usd_amount / self.get_sol_price()],
                 "type": ["BUY"],
                 "Sold_At_Price": [0],
@@ -290,10 +267,17 @@ class SolanaManager:
                 "Signature": [buy_signature],
             })
 
-            # Save logs
+            # Save instantly so tracker can pick it up
             self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"bought_tokens_{date_str}.csv", data)
-            self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"open_positions.csv", data)
+            self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, "open_positions.csv", data)
             self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"discord_{date_str}.csv", data)
+
+            # Spawn async updater for true balance
+            threading.Thread(
+                target=self._update_entry_price_with_balance,
+                args=(output_mint, usd_amount, date_str,  data),
+                daemon=True
+            ).start()
 
             return buy_signature
 
@@ -1218,7 +1202,7 @@ class SolanaManager:
                 "total_usd": 0.0,
             }
 
-    def get_pool_reserves(self, pool_address: str):
+    def get_token_accounts_by_owner(self, pool_address: str):
         logger.info(f"🔍 Checking token pool reserves using Helius...")
 
         # Prepare payload
@@ -1277,7 +1261,7 @@ class SolanaManager:
     def get_token_price_onchain(self, token_mint: str, pool_address: str) -> float:
         """Get USD price for a token using pool reserves and base token info."""
         try:
-            reserves = self.get_pool_reserves(pool_address)
+            reserves = self.get_token_accounts_by_owner(pool_address)
             if len(reserves) < 2:
                 logger.warning(f"⚠️ Pool {pool_address} has insufficient reserves")
                 return 0.0
@@ -1399,3 +1383,35 @@ class SolanaManager:
         logger.debug(f"token owners are {valid_pools}")
         best_owner, _ = max(valid_pools, key=lambda x: x[1])
         return best_owner
+
+    def _update_entry_price_with_balance(self, output_mint: str, usd_amount: float, date_str: str, data: dict):
+        MAX_RETRIES = 15
+        WAIT_TIME = 2
+        token_received = 0
+
+        for attempt in range(MAX_RETRIES):
+            time.sleep(WAIT_TIME)
+            balances = self.get_account_balances()
+            token_info = next((b for b in balances if b['token_mint'] == output_mint), None)
+            if token_info and token_info['balance'] > 0:
+                token_received = token_info['balance']
+                logger.info(f"✅ Token received after buy: {token_received}")
+                break
+            logger.warning(f"🔁 Attempt {attempt + 1}: Token not received yet...")
+
+        if token_received > 0:
+            real_entry_price = usd_amount / token_received
+        else:
+            return
+        # Update files with true entry price
+        data.update({
+            "Real_Entry_Price": [real_entry_price],
+            "Entry_USD": [real_entry_price],
+            "Token_Received": [token_received],
+        })
+
+        self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"bought_tokens_{date_str}.csv", data)
+        self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, "open_positions.csv", data)
+        self.excel_utility.save_to_csv(self.excel_utility.BOUGHT_TOKENS, f"discord_{date_str}.csv", data)
+
+        logger.info(f"📊 Entry price updated for {output_mint}: {real_entry_price:.8f} USD")
