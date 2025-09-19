@@ -1,0 +1,8 @@
+{
+    "jsonrpc": "2.0",
+    "id": "ID_PLACEHOLDER",
+    "method": "getBalance",
+    "params": [
+        "PUBLIC_KEY_PLACE_HOLDER"
+    ]
+}

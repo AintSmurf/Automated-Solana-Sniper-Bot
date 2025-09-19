@@ -19,7 +19,7 @@ copy_files.sh
 get_files_from_server.sh
 *.tar
 scripts
-main.py
+playground.py
 missed_token_analysis.csv
 missed_token_analysis_checked.csv
 log_api.py
@@ -28,4 +28,4 @@ test.json
 backup/
 trade_count.json
 config/bot_settings.json
-tests
+tests/

@@ -1,14 +1,15 @@
 import tkinter as tk
 from tkinter import ttk
 from interface.styling import *
-from config.settings import load_settings
 
 class ClosedPositionsPanel(tk.Frame):
-    def __init__(self, parent, excel_utility=None, **kwargs):
+    def __init__(self, parent, ctx, **kwargs):
         super().__init__(parent, **kwargs)
-        self.settings = load_settings()
+        self.ctx = ctx
+        self.settings = ctx.settings
+        
+        
         kwargs.setdefault("bg", BG_COLOR)
-        self.excel_utility = excel_utility
 
         style = ttk.Style()
         style.theme_use("default")
@@ -29,7 +30,7 @@ class ClosedPositionsPanel(tk.Frame):
                 background=[("active", BG_COLOR_2), ("pressed", BG_COLOR_2)],
                 foreground=[("active", FG_COLOR_WHITE), ("pressed", FG_COLOR_WHITE)])
 
-        self.columns = ["Timestamp", "Token", "Entry_USD", "Exit_USD", "PnL (%)", "Trigger"]
+        self.columns = ["Buy_Timestamp","Sell_Timestamp", "Token Address","Entry_USD", "Exit_USD", "PnL (%)", "Trigger"]
         self.tree = ttk.Treeview(self, columns=self.columns, show="headings", style="Custom.Treeview")
 
         for col in self.columns:
@@ -47,8 +48,9 @@ class ClosedPositionsPanel(tk.Frame):
             tag = "profit" if pnl_value >= 0 else "loss"
 
             self.tree.insert("", "end", values=(
-                row["Timestamp"],
-                row["Token Mint"],
+                row["Buy_Timestamp"],
+                row["Sell_Timestamp"],
+                row["Token_Addres"],
                 f"{row['Entry_USD']:.6f}",
                 f"{row['Exit_USD']:.6f}",
                 f"{pnl_value:.2f}%",
@@ -83,5 +85,13 @@ class ClosedPositionsPanel(tk.Frame):
         self.tree.heading(col, command=lambda c=col: self.sort_by(c, self._sort_descending[col]))
 
     def refresh(self):
-        df = self.excel_utility.load_closed_positions(self.settings["SIM_MODE"])
-        self.update_table(df)
+        self.excel_utility = self.ctx.get("excel_utility")
+        if not self.excel_utility:
+            print("⚠️ ClosedPositionsPanel: excel_utility is None, cannot refresh.")
+            return
+        try:
+            df = self.excel_utility.load_closed_positions(self.settings["SIM_MODE"])
+            self.update_table(df)
+        except Exception as e:
+            print(f"⚠️ Failed to refresh closed positions: {e}")
+

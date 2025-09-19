@@ -1,0 +1,11 @@
+{
+    "jsonrpc": "2.0",
+    "id": "ID_PLACEHOLDER",
+    "method": "getSignatureStatuses",
+    "params": [
+        ["SIGNATURE_PLACEHOLDER"],
+        {
+            "searchTransactionHistory":true
+        }
+    ]
+}
