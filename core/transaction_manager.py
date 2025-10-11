@@ -73,21 +73,17 @@ class TransactionManager:
                 self._cleanup_mint(token_mint)
                 return
 
-            liq_data = self.ctx.get("solana_manager").analyze_liquidty(result, token_mint)
-            if not liq_data:
+            #liquidity check
+            if not self.ctx.get("solana_manager").analyze_liquidty(result, token_mint, self.min_liq):
                 return
-            sol_liq = liq_data["breakdown"]['SOL']
 
-            if sol_liq <= self.min_liq:
-                self.logger.info(f"⛔ Low liquidity {sol_liq:.2f}, skip {token_mint}.")
-                return
-            
-            self.logger.info(f"passed liquidity check — {token_mint}")
+            self.logger.info(f"✅ Passed liquidity test — {token_mint}")
+
             
             market_cap = self.ctx.get("solana_manager").get_token_marketcap(token_mint)
 
             # record (csv)
-            data = self.ctx.get("excel_utility").build_all_tokens_found_excel(signature,token_mint,sol_liq,market_cap)
+            data = self.ctx.get("excel_utility").build_all_tokens_found_excel(signature,token_mint,market_cap)
             self.ctx.get("excel_utility").save_all_tokens(data)
 
             # scam checks
@@ -99,6 +95,7 @@ class TransactionManager:
             #add tokens passed liquidity and first pahse of tests
             with self.ctx.get("known_tokens_lock"):   
                 self.ctx.get("known_tokens").add(token_mint)
+                self._cleanup_mint(token_mint)
 
             # volume snapshot async
             future = run_bg(self.ctx.get("volume_tracker")._volume_worker, token_mint,signature,blocktime, name=f"vol-{token_mint[:6]}")
@@ -107,10 +104,7 @@ class TransactionManager:
 
             # BUY / SIM
             if not self.ctx.get("trade_counter").reached_limit():
-                if self.sim_mode:
-                    self.ctx.get("solana_manager").buy("So11111111111111111111111111111111111111112", token_mint, self.trade_amount, sim=True)
-                else:
-                    self.ctx.get("solana_manager").buy("So11111111111111111111111111111111111111112", token_mint, self.trade_amount)
+                self.ctx.get("solana_manager").buy("So11111111111111111111111111111111111111112", token_mint, self.trade_amount, self.sim_mode)
                 self.ctx.get("trade_counter").increment()
             else:
                 self.logger.critical("💥 MAXIMUM_TRADES reached — skipping trade.")
@@ -121,7 +115,6 @@ class TransactionManager:
             msg = (
                 f"🟢 **New token detected**\n"
                 f"`{token_mint}`\n"
-                f"• Est. Liquidity: ${sol_liq:,.2f}\n"
                 f"• signature: `{signature}`\n"
                 f"• 🕒 Flow duration: {dur:,.2f}\n"
             )
@@ -131,7 +124,7 @@ class TransactionManager:
             run_timer(
                 60.0,
                 self.ctx.get("solana_manager").second_phase_tests,
-                token_mint,signature, sol_liq, market_cap,
+                token_mint,signature, market_cap,
                 name=f"postcheck-{token_mint[:6]}"
             )
 
@@ -180,9 +173,9 @@ class TransactionManager:
             sinagures = self.ctx.get("solana_manager").get_recent_transactions_signatures_for_token(token_mint)
             for tx_sig in sinagures[1:5]:
                 with self.ctx.get("signature_seen_lock"):
-                    if tx_sig in self.ctx["signature_seen"]:
+                    if tx_sig in self.ctx.get("signature_seen"):
                         continue
-                    self.ctx["signature_seen"].add(tx_sig)
+                    self.ctx.get("signature_seen").add(tx_sig)
                 self.ctx.get("prefetch_queue").put((tx_sig, None, token_mint, "PREFETCH"))
                 self.logger.debug(f"🧊 Queued early tx: {tx_sig}")
         except Exception as e:

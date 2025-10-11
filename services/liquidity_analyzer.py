@@ -76,26 +76,44 @@ class LiquidityAnalyzer:
             "total_liq_usd": total_liq_usd,
         }
 
-    def analyze_liquidty(self, transaction: dict, token_mint: str) -> float:
-        pool_address = self.store_pool_mapping(token_mint, transaction)
-        if not pool_address:
-            return {}
-        data = self.parse_liquidity_logs(transaction, token_mint,pool_address)
-        token_liq = data["token_liq_usd"]
+    def analyze_liquidty(self, transaction: dict, token_mint: str, min_liq: float) -> bool:
+        pool_data = self.store_pool_mapping(token_mint, transaction)
+        if not pool_data:
+            return False
+
+        pool_address, dex = pool_data
+
+        data = self.parse_liquidity_logs(transaction, token_mint, pool_address)
+        sol_liq = data["breakdown"].get("SOL", 0)
         total_liq = data["total_liq_usd"]
 
-        if total_liq > 0:
-            self.logger.info(
-                f"💧 Liquidity detected for {token_mint} - Total ${total_liq:.2f}, "
-                f"SOL side: ${total_liq:.2f}, Token side: ${token_liq:.2f}, "
-                f"Launch price: ${data['launch_price_usd']:.8f}"
-            )
-            # Save CSV row
-            row = self.ctx.get("excel_utility").build_liquidity_csv(token_mint, data["breakdown"])
-            self.ctx.get("excel_utility").save_liquidity(row)
-        else:
-            self.logger.info("ℹ️ No liquidity info found in balances.")
-        return data
+        if total_liq <= 0:
+            self.logger.info(f"ℹ️ No liquidity info found for {token_mint}.")
+            return False
+
+        self.logger.info(
+            f"💧 Liquidity detected for {token_mint} - Total ${total_liq:.2f}, "
+            f"SOL side: ${sol_liq:.2f}, Token side: ${data['token_liq_usd']:.2f}, "
+            f"Launch price: ${data['launch_price_usd']:.8f}"
+        )
+
+        row = self.ctx.get("excel_utility").build_liquidity_csv(token_mint, data["breakdown"])
+        self.ctx.get("excel_utility").save_liquidity(row)
+
+        if sol_liq >= min_liq:
+            if token_mint not in self.token_pools:
+                self.token_pools[token_mint] = {"pool": pool_address, "dex": dex}
+                self.logger.info(f"💾 Pool meets threshold — saving {token_mint}")
+                self.logger.debug(f"🔍 Pool {pool_address[:6]}... detected with {sol_liq:.2f} SOL liquidity for {token_mint}")
+
+                data_excel = self.ctx.get("excel_utility").build_pda_excel(
+                    token_mint, pool_address, dex, "NEW"
+                )
+                self.ctx.get("excel_utility").save_pool_pda(data_excel)
+            return True
+
+        self.logger.info(f"⛔ Low liquidity (${sol_liq:.2f}) for {token_mint}")
+        return False
 
     def calculate_on_chain_price(self,reserve_token: int,token_decimals: int,reserve_base: int,base_decimals: int,base_symbol: str,sol_price: float) -> float:
             token_amount = lamports_to_decimal(reserve_token, token_decimals)
@@ -164,39 +182,23 @@ class LiquidityAnalyzer:
             post_balances = transaction.get("meta", {}).get("postTokenBalances", [])
             account_keys = transaction.get("transaction", {}).get("message", {}).get("accountKeys", [])
 
-            pool_address, dex = None, None
-
             pool_address = self.detect_pool_pda(post_balances, token_mint)
+            if not pool_address:
+                self.logger.debug(f"⚠️ No pool detected for {token_mint}")
+                return None
+
             if any(pid in account_keys for pid in PUMPFUN_PROGRAM_IDS):
                 dex = "pumpfun"
             elif any(pid in account_keys for pid in RAYDIUM_PROGRAM_IDS):
                 dex = "raydium"
-
-            if pool_address:
-                prev_entry = self.token_pools.get(token_mint)
-                self.token_pools[token_mint] = {"pool": pool_address, "dex": dex}
-
-                if not prev_entry:
-                    migration_flag = "NEW"
-                    self.logger.info(f"💾 Stored pool {pool_address} ({dex}) for {token_mint}")
-                    data = self.ctx.get("excel_utility").build_pda_excel(token_mint, pool_address, dex, migration_flag)
-                    self.ctx.get("excel_utility").save_pool_pda(data)
-                elif prev_entry["pool"] != pool_address:
-                    migration_flag = "MIGRATED"
-                    self.logger.info(
-                        f"🔄 Token {token_mint} migrated pool "
-                        f"{prev_entry['pool']} ({prev_entry['dex']}) → {pool_address} ({dex})"
-                    )
-                    data = self.ctx.get("excel_utility").build_pda_excel(token_mint, pool_address, dex, migration_flag)
-                    self.ctx.get("excel_utility").save_pool_pda(data)   
-                else:
-                    return prev_entry["pool"]
-                return pool_address
             else:
-                self.logger.debug(f"⚠️ No pool detected for {token_mint}")
+                dex = "unknown"
+
+            return pool_address, dex
 
         except Exception as e:
-            self.logger.error(f"⚠️ Failed to store pool for {token_mint}: {e}")
+            self.logger.error(f"⚠️ Failed to detect pool for {token_mint}: {e}")
+            return None, None
 
     def detect_pool_pda(self, post_token_balances: list[dict], token_mint: str) -> str | None:
 
@@ -242,4 +244,5 @@ class LiquidityAnalyzer:
                         return mint
             return None
         except Exception as e:
-            self.logger.error("failed to extract new mint")   
+            self.logger.error("failed to extract new mint")
+    

@@ -21,6 +21,7 @@ class ExcelUtility:
         self.OPEN_POISTIONS = os.path.join(self.TOKENS_DIR, "open_poistions")
         self.CLOSED_POISTIONS = os.path.join(self.TOKENS_DIR, "closed_poistions")
         self.FAILED_TOKENS = os.path.join(self.TOKENS_DIR, "failed_tokens")
+        self.FAILED_RPC_CALLS = os.path.join(self.base_dir, "failed_rpc_calls")
 
 
         self.create_folders()
@@ -31,29 +32,43 @@ class ExcelUtility:
         os.makedirs(self.OPEN_POISTIONS, exist_ok=True)
         os.makedirs(self.CLOSED_POISTIONS, exist_ok=True)
         os.makedirs(self.FAILED_TOKENS, exist_ok=True)
+        os.makedirs(self.FAILED_RPC_CALLS, exist_ok=True)
         os.makedirs(self.NOTIFICATIONS, exist_ok=True)
         logger.info("✅ Successfully created folders ..")
 
-    def save_to_csv(self, directory, filename, data) -> None:
+    def save_to_csv(self, directory: str, filename: str, data) -> None:
+        os.makedirs(directory, exist_ok=True)
         filepath = os.path.join(directory, filename)
-
-        # If single row dict → wrap in list
-        if isinstance(data, dict):
-            df = pd.DataFrame([data])
-        else:
-            df = pd.DataFrame(data)
-
+        df_new = pd.DataFrame([data]) if isinstance(data, dict) else pd.DataFrame(data)
+        df_new = df_new.convert_dtypes()
+        if "Token_bought" not in df_new.columns:
+            if os.path.exists(filepath):
+                existing = pd.read_csv(filepath)
+                df = pd.concat([existing, df_new], ignore_index=True).drop_duplicates()
+            else:
+                df = df_new
+            df.to_csv(filepath, index=False)
+            logger.debug(f"✅ Data saved to {filepath} (no Token_bought key found)")
+            return
         if os.path.exists(filepath):
-            existing_df = pd.read_csv(filepath)
-            updated_df = pd.concat([existing_df, df], ignore_index=True)
-
-            # 🔑 drop duplicates globally
-            updated_df = updated_df.drop_duplicates()
+            df = pd.read_csv(filepath)
         else:
-            updated_df = df
+            df = pd.DataFrame(columns=df_new.columns)
 
-        updated_df.to_csv(filepath, index=False)
-        logger.debug(f"✅ Data saved to {filepath} (dedup applied)")
+        for _, row in df_new.iterrows():
+            token = str(row.get("Token_bought", "")).strip()
+            if not token:
+                continue
+
+            if token in df["Token_bought"].astype(str).values:
+                idx = df[df["Token_bought"].astype(str) == token].index[0]
+                for col, val in row.items():
+                    df.at[idx, col] = val
+            else:
+                df = pd.concat([df, pd.DataFrame([row.to_dict()])], ignore_index=True)
+
+        df.to_csv(filepath, index=False)
+        logger.debug(f"✅ Data saved to {filepath} (merged by Token_bought)")
 
     def remove_row_by_token(self, filepath: str, token_mint: str)->None:
         try:
@@ -103,14 +118,6 @@ class ExcelUtility:
         })
         return base_data
 
-    def build_failed_buy_data(self, base_data, error_code, error_message)->dict:
-        base_data.update({
-            "type": "FAILED_BUY",
-            "Error_Code": error_code,
-            "Error_Message": error_message,
-        })
-        return base_data
-
     def build_pending_buy_data(self, base_data, real_entry_price, token_received, usd_amount,  buy_signature)->dict:
         base_data.update({
             "Real_Entry_Price": real_entry_price,
@@ -127,9 +134,23 @@ class ExcelUtility:
         self.save_to_csv(self.OPEN_POISTIONS, f"simulated_tokens.csv", data)
         self.save_discord(data)
 
+    def build_failed_transactions(self,token_name:str,err:str):
+        return{
+            "token_name":token_name,
+            "reason":err,
+        }
+    
     def save_failed_buy(self, data: dict)->None:
-        date_str = self._get_date_str()
-        self.save_to_csv(self.FAILED_TOKENS, f"failed_buys_{date_str}.csv", data)
+        self.save_to_csv(self.FAILED_TOKENS, f"failed_tokens.csv", data)
+    
+    def build_failed_rpc_calls(self,function_name:str,err:str,msg:str):
+        return{
+            "function_name":function_name,
+            "Error_Code":err,
+            "Error_Message":msg
+        }
+    def save_failed_rpc(self, data: dict)->None:
+        self.save_to_csv(self.FAILED_RPC_CALLS, f"failed_rpc_calls.csv", data)
 
     def save_pending_buy(self, data: dict)->None:
         self.save_to_csv(self.OPEN_POISTIONS, f"bought_tokens.csv", data)
@@ -167,11 +188,10 @@ class ExcelUtility:
         date_str = self._get_date_str()
         self.save_to_csv(self.NOTIFICATIONS, f"discord_{date_str}.csv", data)
     
-    def build_post_buy_data(self,token_mint:str,liquidity:float,market_cap:float,score:int,stats:dict,results:dict)->dict:
+    def build_post_buy_data(self,token_mint:str,market_cap:float,score:int,stats:dict,results:dict)->dict:
         return {
                 "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "Token Mint": token_mint,
-                "Liquidity (Estimated)": liquidity,
                 "Market Cap": market_cap,
                 "Score": score,
                 "LP_Check": results["LP_Check"],
@@ -185,12 +205,11 @@ class ExcelUtility:
                 "Current Volume": stats["total_usd"],
         }
 
-    def build_all_tokens_found_excel(self,signature:str,token_mint:str,liquidity:float,market_cap:float):
+    def build_all_tokens_found_excel(self,signature:str,token_mint:str,market_cap:float):
         return{
         "Timestamp": self._get_formatted_date_str(),
         "Signature": signature,
         "Token Mint": token_mint,
-        "Liquidity (Estimated)": liquidity,
         "MarketCap": market_cap,
         }   
     
@@ -228,7 +247,7 @@ class ExcelUtility:
                 "Sell_Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "Entry_USD": entry_price_usd,
                 "Exit_USD": current_price_usd,
-                "PnL (%)": pnl,
+                "PnL (%)": f"{pnl:.2f}%",
                 "Trigger": trigger,
             }
     
@@ -356,20 +375,26 @@ class ExcelUtility:
 
     def update_buy(self,base_data:dict,buy_signature:str,real_entry_price:float):
         base_data.update({
-            "Buy_Signature": buy_signature,
+            "type": buy_signature,
             "Real_Entry_Price": real_entry_price,
             "Entry_USD":real_entry_price
         })
         return base_data
 
-    def update_sell(self, base_data: dict,exit_usd: float):
-        base_data.update({"Exit_USD": exit_usd})
-        entry_usd = base_data.get("Entry_USD")
-        if entry_usd and exit_usd:
-            try:
-                base_data["PnL_%"] = ((exit_usd / float(entry_usd)) - 1) * 100
-            except Exception:
+    def update_sell(self, base_data: dict, exit_usd: float, sell_signature: str = None):
+        try:
+            base_data["Exit_USD"] = float(exit_usd)
+            base_data["Sell_Signature"] = sell_signature
+            if sell_signature:
+                entry_usd = float(base_data.get("Entry_USD", 0))
+            if entry_usd > 0 and exit_usd is not None:
+                pnl = ((exit_usd / entry_usd) - 1) * 100
+                base_data["PnL_%"] = round(pnl, 2)
+            else:
                 base_data["PnL_%"] = None
+        except Exception as e:
+            logger.error(f"❌ Failed PnL calculation: {e}")
+            base_data["PnL_%"] = None
 
         return base_data
 

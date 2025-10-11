@@ -161,9 +161,10 @@ class HeliusClient:
             self.logger.error(f"❌ Error simulating transaction: {e}")
             return False
     
-    def verify_signature(self,signature:str)->str | None:   
-        max_retries = 3
-        delay = 4 
+    def verify_signature(self, signature: str) -> str | None:
+        max_retries = 10   
+        delay = 2          
+
         for attempt in range(1, max_retries + 1):
             try:
                 self.ctx.get("helius_rl").wait()
@@ -175,19 +176,28 @@ class HeliusClient:
                     payload=self.get_signature_status,
                 )
 
-                self.logger.debug(f"getSignatureStatuses response: {response}")
                 result = self._assert_response_ok(response, f"verify_signature {signature}")
                 if not result:
-                    return None
-                status_data = result.get("value", [])[0]
+                    time.sleep(delay)
+                    continue
+
+                status_data = result.get("value", [None])[0]
                 if not status_data:
                     self.logger.warning(f"⚠️ Empty status for signature {signature} (attempt {attempt})")
-                return status_data.get("confirmationStatus")
-            except Exception as e:
-                self.logger.error(f"❌ Error verifying signature {signature} (attempt {attempt}): {e}",
-                                exc_info=True)
+                    time.sleep(delay)
+                    continue
 
-            if attempt < max_retries:
+                status = status_data.get("confirmationStatus")
+                if status in ("confirmed", "finalized"):
+                    self.logger.info(f"✅ Signature {signature} {status}")
+                    return status
+
+                # Still pending or processed
+                self.logger.debug(f"⏳ Signature {signature} still {status} (attempt {attempt})")
+                time.sleep(delay)
+
+            except Exception as e:
+                self.logger.error(f"❌ Error verifying signature {signature} (attempt {attempt}): {e}", exc_info=True)
                 time.sleep(delay)
 
         self.logger.error(f"❌ Failed to verify signature {signature} after {max_retries} attempts")
@@ -346,15 +356,57 @@ class HeliusClient:
         except Exception as e:
             self.logger.error(f"failed to retrive transaction: {e}")   
 
-    def _assert_response_ok(self, response: dict, description: str = "Helius call") -> dict:
+    def _assert_response_ok(self, response: dict, description: str = "Helius call") -> dict | None:
         try:
-            assert isinstance(response, dict), f"❌ {description}: Expected dict, got {type(response)}"
-            assert "result" in response, f"❌ {description}: Missing 'result' key. Full response: {response}"
+            # 1️⃣ Type check
+            if not isinstance(response, dict):
+                self.logger.error(f"❌ {description}: Expected dict, got {type(response)}")
+
+                fail_data = self.ctx.get("excel_utility").build_failed_rpc_calls(
+                    description,
+                    "INVALID_TYPE",
+                    f"Expected dict, got {type(response)}"
+                )
+                self.ctx.get("excel_utility").save_failed_rpc(fail_data)
+                return None
+            if "error" in response:
+                err = response["error"]
+                code = err.get("code", "UNKNOWN")
+                msg = err.get("message", "No message")
+                data = err.get("data", "No data")
+
+                self.logger.error(f"❌ {description}: RPC error {code}: {msg} | data={data}")
+
+                fail_data = self.ctx.get("excel_utility").build_failed_rpc_calls(
+                    description,
+                    str(code),
+                    f"{msg} | data={data}"
+                )
+                self.ctx.get("excel_utility").save_failed_rpc(fail_data)
+                return None
+            if "result" not in response:
+                self.logger.error(f"❌ {description}: Missing 'result' key. Full response: {response}")
+
+                fail_data = self.ctx.get("excel_utility").build_failed_rpc_calls(
+                    description,
+                    "NO_RESULT_KEY",
+                    str(response)
+                )
+                self.ctx.get("excel_utility").save_failed_rpc(fail_data)
+                return None
             return response["result"]
-        except AssertionError as e:
-                self.logger.error(f"failed at {description}: error{e}")
-        return None
-    
+
+        except Exception as e:
+            self.logger.error(f"❌ {description}: unexpected error: {e}", exc_info=True)
+
+            fail_data = self.ctx.get("excel_utility").build_failed_rpc_calls(
+                description,
+                "EXCEPTION",
+                str(e)
+            )
+            self.ctx.get("excel_utility").save_failed_rpc(fail_data)
+            return None
+
     def get_enhanced_transactions_by_address(self,PDA:str):
         self.logger.info(f"retriving transactions for pair key: {PDA} using Helius...")
         try:

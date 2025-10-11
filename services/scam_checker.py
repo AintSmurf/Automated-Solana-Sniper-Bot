@@ -87,7 +87,7 @@ class ScamChecker:
             self.logger.error(f"❌ Error checking scam tests for {token_mint}: {e}", exc_info=True)
             return False
     
-    def second_phase_tests(self, token_mint:str,signature:str, liquidity:float, market_cap:float, attempt:int=1):
+    def second_phase_tests(self, token_mint:str,signature:str,market_cap:float, attempt:int=1):
         self.logger.info(f"⏳ Running DELAYED post-buy check (attempt {attempt}) for {token_mint}...")
 
         results = {
@@ -136,7 +136,7 @@ class ScamChecker:
                 score += 1
         except Exception as e:
             self.logger.error(f"❌ Market cap check failed for {token_mint}: {e}")
-        data =self.ctx.get("excel_utility").build_post_buy_data(token_mint,liquidity,market_cap,score,stats,results)
+        data =self.ctx.get("excel_utility").build_post_buy_data(token_mint,market_cap,score,stats,results)
         self.ctx.get("excel_utility").save_post_buy(data)
         return {"score": score, "results": results}
     
