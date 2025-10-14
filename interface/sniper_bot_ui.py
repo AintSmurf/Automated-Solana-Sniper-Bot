@@ -59,9 +59,8 @@ class SniperBotUI(tk.Tk):
         self._logging_frame.pack(fill="both", expand=True)
         
         #pull messages
-        ui_log_handler = UILogHandler(self._logging_frame)
-        tracker_logger = LoggingHandler.get_named_logger("tracker")
-        tracker_logger.addHandler(ui_log_handler)
+        self.ui_log_handler = UILogHandler(self._logging_frame)
+
 
         closed_frame = tk.LabelFrame(
             left_frame, text="Closed Positions",
@@ -88,6 +87,10 @@ class SniperBotUI(tk.Tk):
         self.trade_counter = self.ctx.get("trade_counter")
         self.tracker = self.ctx.get("open_position_tracker")
         self.trade_counter.reset()
+
+        #attach logger
+        tracker_logger = self.ctx.get("tracker_logger")
+        tracker_logger.addHandler(self.ui_log_handler)
 
         # Update Total Trades immediately
         self.update_total_trades()

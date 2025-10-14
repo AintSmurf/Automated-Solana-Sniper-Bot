@@ -44,7 +44,11 @@ class ClosedPositionsPanel(tk.Frame):
     def update_table(self, df):
         self.tree.delete(*self.tree.get_children())
         for _, row in df.iterrows():
-            pnl_value = row["PnL (%)"]
+            try:
+                pnl_str = str(row["PnL (%)"]).replace("%", "").strip()
+                pnl_value = float(pnl_str) if pnl_str else 0.0
+            except ValueError:
+                pnl_value = 0.0 
             tag = "profit" if pnl_value >= 0 else "loss"
 
             self.tree.insert("", "end", values=(
@@ -56,9 +60,10 @@ class ClosedPositionsPanel(tk.Frame):
                 f"{pnl_value:.2f}%",
                 row["Trigger"]
             ), tags=(tag,))
-            
+
         self.tree.tag_configure("profit", foreground="lightgreen")
         self.tree.tag_configure("loss", foreground="red")
+
 
     def sort_by(self, col, descending):
         """Sort tree contents when a column header is clicked."""
@@ -85,12 +90,8 @@ class ClosedPositionsPanel(tk.Frame):
         self.tree.heading(col, command=lambda c=col: self.sort_by(c, self._sort_descending[col]))
 
     def refresh(self):
-        self.excel_utility = self.ctx.get("excel_utility")
-        if not self.excel_utility:
-            print("⚠️ ClosedPositionsPanel: excel_utility is None, cannot refresh.")
-            return
         try:
-            df = self.excel_utility.load_closed_positions(self.settings["SIM_MODE"])
+            df = self.ctx.get("excel_utility").load_closed_positions(self.settings["SIM_MODE"])
             self.update_table(df)
         except Exception as e:
             print(f"⚠️ Failed to refresh closed positions: {e}")
