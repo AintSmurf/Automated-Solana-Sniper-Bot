@@ -58,6 +58,25 @@ def create_tables():
                     detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
+                # TOKEN VOLUME
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS token_volumes (
+                        id SERIAL PRIMARY KEY,
+                        token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
+                        buy_usd DOUBLE PRECISION DEFAULT 0,
+                        sell_usd DOUBLE PRECISION DEFAULT 0,
+                        total_usd DOUBLE PRECISION DEFAULT 0,
+                        buy_count INT DEFAULT 0,
+                        sell_count INT DEFAULT 0,
+                        buy_ratio DOUBLE PRECISION DEFAULT 0,
+                        net_flow DOUBLE PRECISION DEFAULT 0,
+                        launch_time TIMESTAMP,
+                        launch_volume DOUBLE PRECISION DEFAULT 0,
+                        delta_volume DOUBLE PRECISION DEFAULT 0,
+                        snapshot_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                
 
                 # TOKEN STATS
                 cur.execute("""
@@ -66,9 +85,7 @@ def create_tables():
                     token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
                     market_cap DOUBLE PRECISION,
                     liquidity_usd DOUBLE PRECISION,
-                    dex_source TEXT,
                     holders_count INT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
 
@@ -81,8 +98,7 @@ def create_tables():
                     holders_check BOOLEAN,
                     volume_check BOOLEAN,
                     marketcap_check BOOLEAN,
-                    rugcheck_score INT,
-                    final_passed BOOLEAN,
+                    score INT,
                     checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
@@ -98,7 +114,8 @@ def create_tables():
                     pnl_percent DOUBLE PRECISION,
                     trigger_reason TEXT,
                     simulation BOOLEAN,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT
                 );
                 """)
 

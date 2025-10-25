@@ -27,6 +27,8 @@ from threading import Lock
 from services.sql_db_utility import SqlDBUtility
 from dao.token_dao import TokenDAO
 from dao.liquidity_dao import LiquidityDAO
+from dao.volume_dao import VolumeDAO
+from dao.scam_checker_dao import ScamCheckerDao
 
 
 
@@ -68,6 +70,8 @@ class BotOrchestrator:
         ctx.register("sql_db", SqlDBUtility(ctx))
         ctx.register("token_dao",TokenDAO(ctx))
         ctx.register("liquidity_dao", LiquidityDAO(ctx))
+        ctx.register("volume_dao", VolumeDAO(ctx))
+        ctx.register("scam_checker_dao", ScamCheckerDao(ctx))
 
 
         # 2. Utilities  

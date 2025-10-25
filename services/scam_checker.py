@@ -91,20 +91,20 @@ class ScamChecker:
         self.logger.info(f"⏳ Running DELAYED post-buy check (attempt {attempt}) for {token_mint}...")
 
         results = {
-            "LP_Check": "FAIL",
-            "Holders_Check": "FAIL",
-            "Volume_Check": "FAIL",
-            "MarketCap_Check": "FAIL",
+            "LP_Check": False,
+            "Holders_Check": False,
+            "Volume_Check": False,
+            "MarketCap_Check": False,
         }
         score = 0
         # LP lock ratio
         try:
             lp_status = self.ctx.get("rug_check").is_liquidity_unlocked_test(token_mint)
             if lp_status == "safe":
-                results["LP_Check"] = "PASS"
+                results["LP_Check"] = True
                 score += 1
             elif lp_status == "risky":
-                results["LP_Check"] = "RISKY"
+                results["LP_Check"] = False
                 score += 0.5
         except Exception as e:
             self.logger.error(f"❌ LP check failed for {token_mint}: {e}")
@@ -112,7 +112,7 @@ class ScamChecker:
         # Holder distribution
         try:
             if self.ctx.get("helius_client").get_largest_accounts(token_mint):
-                results["Holders_Check"] = "PASS"
+                results["Holders_Check"] = True
                 score += 1
         except Exception as e:
             self.logger.error(f"❌ Holder distribution check failed for {token_mint}: {e}")
@@ -121,8 +121,10 @@ class ScamChecker:
         try:
             self.ctx.get("volume_tracker").check_volume_growth(token_mint, signature)
             stats = self.ctx.get("volume_tracker").stats(token_mint, window=999999)
+            token_id = self.ctx.get("token_dao").get_token_id_by_address(token_mint)
+            self.ctx.get("volume_dao").insert_volume_snapshot(token_id, stats)
             if stats["delta_volume"] > 0:
-                results["Volume_Check"] = "PASS"
+                results["Volume_Check"] = True
                 score += 1
             else:
                 results["Volume_Check"] = f"FAIL (ΔVol ${stats['delta_volume']:.2f})"
@@ -132,11 +134,11 @@ class ScamChecker:
         # Market cap
         try:
             if market_cap and market_cap <= 1_000_000:
-                results["MarketCap_Check"] = "PASS"
+                results["MarketCap_Check"] = True
                 score += 1
         except Exception as e:
             self.logger.error(f"❌ Market cap check failed for {token_mint}: {e}")
-        data =self.ctx.get("excel_utility").build_post_buy_data(token_mint,market_cap,score,stats,results)
-        self.ctx.get("excel_utility").save_post_buy(data)
+        token_id = self.ctx.get("token_dao").get_token_id_by_address(token_mint)
+        self.ctx.get("scam_checker_dao").insert_token_results(token_id,results["LP_Check"],results["Holders_Check"],results["Volume_Check"],results["MarketCap_Check"],score)
         return {"score": score, "results": results}
     
