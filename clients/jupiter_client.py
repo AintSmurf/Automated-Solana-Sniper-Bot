@@ -14,13 +14,13 @@ class JupiterClient:
         self.jupiter_requests = ctx.get("jupiter_requests")
         self.swap_payload = get_payload("Swap_token_payload")
   
-    def get_quote_dict(self, input_mint:str, output_mint:str, token_amount:float)->dict:
+    def get_quote_dict(self, input_mint:str, output_mint:str, token_amount:float, slippage_override: float = None)->dict:
         try:
             self.ctx.get("jupiter_rl").wait()            
-            slippage_bps = int(self.ctx.settings["SLPG"]) * 100
+            slippage_value = slippage_override if slippage_override is not None else self.ctx.settings["SLPG"]
+            slippage_bps = int(slippage_value) * 100
             quote_url = f"{JUPITER_STATION['QUOTE_ENDPOINT']}?inputMint={input_mint}&outputMint={output_mint}&amount={token_amount}&slippageBps={slippage_bps}&restrictIntermediateTokens=true"
             quote_response = self.jupiter_requests.get(quote_url)
-
             if "error" in quote_response:
                 self.logger.warning(f"⚠️ Quote attempt failed: {quote_response['error']}")
                 return {}

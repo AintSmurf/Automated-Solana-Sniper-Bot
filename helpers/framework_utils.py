@@ -99,3 +99,6 @@ def lamports_to_decimal(amount: int, decimals: int) -> float:
 def decimal_to_lamports(amount: float, decimals: int) -> int:
      return int(amount * (10 ** decimals))
 
+#date
+def get_formatted_date_str()->datetime:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")

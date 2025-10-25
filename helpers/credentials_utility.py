@@ -28,6 +28,15 @@ class CredentialsUtility:
         logger.info("retrieving DEX Name ...")
         return os.environ["DEX"]
 
+    def get_db_creds(self):
+        logger.info("retrieving Db creds ...")
+        return{
+            "DB_NAME":os.environ["DB_NAME"],
+            "DB_HOST":os.environ["DB_HOST"],
+            "DB_PORT":os.environ["DB_PORT"],
+            "DB_USER":os.environ["DB_USER"],
+            "DB_PASSWORD":os.environ["DB_PASSWORD"],
+        }
     def get_all(self):
         return {
             "helius": self.get_helius_api_key(),
@@ -35,4 +44,5 @@ class CredentialsUtility:
             "wallet_key": self.get_solana_private_wallet_key(),
             "bird_eye": self.get_bird_eye_key(),
             "discord": self.get_discord_token(),
+            "db":self.get_db_creds()
         }

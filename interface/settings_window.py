@@ -252,12 +252,10 @@ class SettingsConfigUI(tk.Toplevel):
                             column=0, columnspan=2, sticky="w", padx=10, pady=(0, 4))
 
     def _save_and_continue(self):
-        # Save exit rules
         if hasattr(self, "exit_flags"):
             for flag, var in self.exit_flags.items():
                 self.settings["EXIT_RULES"][flag] = var.get()
 
-        # Save notifications
         if hasattr(self, "notify_flags"):
             for flag, widget in self.notify_flags.items():
                 if isinstance(widget, tk.BooleanVar):
@@ -265,8 +263,10 @@ class SettingsConfigUI(tk.Toplevel):
                 else:
                     self.settings["NOTIFY"][flag] = widget.get().strip()
 
-        # Save normal entries
         for key, widget in self.entries.items():
+            if key.endswith(("_min_interval", "_max_rpm")):
+                continue
+
             if isinstance(widget, tk.BooleanVar):
                 val_cast = widget.get()
             else:
@@ -276,7 +276,7 @@ class SettingsConfigUI(tk.Toplevel):
                 except (ValueError, SyntaxError):
                     val_cast = val
             self.settings[key] = val_cast
-        # Save rate limits
+
         if hasattr(self, "rate_limit_entries"):
             for api, cfg in self.settings["RATE_LIMITS"].items():
                 # min_interval
@@ -288,7 +288,6 @@ class SettingsConfigUI(tk.Toplevel):
                     except ValueError:
                         cfg["min_interval"] = val
 
-                # max_requests_per_minute
                 rpm_key = f"{api}_max_rpm"
                 if rpm_key in self.entries:
                     val = self.entries[rpm_key].get().strip()
@@ -296,7 +295,7 @@ class SettingsConfigUI(tk.Toplevel):
                         cfg["max_requests_per_minute"] = int(val) if val else None
                     except ValueError:
                         cfg["max_requests_per_minute"] = None
-                # jitter_range
+
                 jr_key = f"{api}_jitter_range"
                 if jr_key in self.rate_limit_entries:
                     j_min, j_max = self.rate_limit_entries[jr_key]
@@ -305,15 +304,19 @@ class SettingsConfigUI(tk.Toplevel):
                         j_max_val = float(j_max.get().strip())
                         cfg["jitter_range"] = [j_min_val, j_max_val]
                     except ValueError:
-                        pass  # keep old values if parsing fails
-        # ✅ Save selected network
+                        pass  
+
         if hasattr(self, "network_var"):
             self.settings["NETWORK"] = self.network_var.get()
-            self.ctx.settings_manager.save_settings(self.settings)
-        if self.on_save: 
-            self.on_save()                   
+
+        # Persist to file
+        self.ctx.settings_manager.save_settings(self.settings)
+
+        if self.on_save:
+            self.on_save()
         messagebox.showinfo("Settings Saved", "✅ Your settings have been saved successfully.")
         self.destroy()
+
 
     def _on_close(self):
         if messagebox.askyesno("Exit without saving?", "⚠️ Your changes will be lost. Continue?"):

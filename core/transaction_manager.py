@@ -18,9 +18,7 @@ class TransactionManager:
         self.trade_amount = st["TRADE_AMOUNT"]
         self.sim_mode = st["SIM_MODE"]
 
-        # optional: timers (if you want to keep “flow duration”)
         self.flow_timer_by_token = {}
-        self.transaction_timers = {}
 
     def run(self, stop_event: Event) -> None:
         while not stop_event.is_set():
@@ -82,10 +80,21 @@ class TransactionManager:
             
             market_cap = self.ctx.get("solana_manager").get_token_marketcap(token_mint)
 
-            # record (csv)
-            data = self.ctx.get("excel_utility").build_all_tokens_found_excel(signature,token_mint,market_cap)
-            self.ctx.get("excel_utility").save_all_tokens(data)
+            # record new token
+            pending = self.ctx.get("pending_data").pop(token_mint, None)
+            if pending:
+                try:
+                    token_id = self.ctx.get("token_dao").insert_new_token(signature, token_mint)
 
+                    pool_addr = pending.get("pool_address")
+                    dex = pending.get("dex")
+                    if pool_addr and dex:
+                        self.ctx.get("liquidity_dao").insert_pool(token_id, pool_addr, dex)
+
+                    self.ctx.get("liquidity_dao").insert_snapshot(token_id, pending)
+                except Exception as db_err:
+                    self.logger.error(f"💾 DB insert failed for {token_mint}: {db_err}", exc_info=True)
+            
             # scam checks
             if not self.ctx.get("solana_manager").first_phase_tests(token_mint):
                 self.logger.warning(f"❌ Scam check failed — skipping {token_mint}")

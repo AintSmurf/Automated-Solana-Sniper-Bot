@@ -114,7 +114,7 @@ class VolumeTracker:
         volumes[mint]["total_usd"] = volumes[mint]["buy_usd"] + volumes[mint]["sell_usd"]
 
     def _volume_worker(self, token_mint:str, signature:str,block_time:int)->None:
-        pool_address = self.ctx.get("excel_utility").load_pool_pdas()[token_mint].get("pool")
+        pool_address = self.ctx.get("liquidity_dao").get_pool_address(token_mint)
         snap = self.parse_helius_swap_volume(pool_address)
         agg_buy = sum(v.get("buy_usd", 0.0) for v in snap.values())
         agg_sell = sum(v.get("sell_usd", 0.0) for v in snap.values())
@@ -131,7 +131,7 @@ class VolumeTracker:
                 self.logger.warning(f"⚠️ Volume worker not finished for {token_mint}: {e}")
 
         launch_info = self.token_launch_info.get(token_mint, {})
-        pool_address = self.ctx.get("excel_utility").load_pool_pdas()[token_mint].get("pool")
+        pool_address = self.ctx.get("liquidity_dao").get_pool_address(token_mint)
 
         snap_volumes = self.parse_helius_swap_volume(pool_address)
 

@@ -41,14 +41,14 @@ class ExcelUtility:
         filepath = os.path.join(directory, filename)
         df_new = pd.DataFrame([data]) if isinstance(data, dict) else pd.DataFrame(data)
         df_new = df_new.convert_dtypes()
-        if "Token_bought" not in df_new.columns:
+        if "Token_Address" not in df_new.columns:
             if os.path.exists(filepath):
                 existing = pd.read_csv(filepath)
                 df = pd.concat([existing, df_new], ignore_index=True).drop_duplicates()
             else:
                 df = df_new
             df.to_csv(filepath, index=False)
-            logger.debug(f"✅ Data saved to {filepath} (no Token_bought key found)")
+            logger.debug(f"✅ Data saved to {filepath} (no Token_Address key found)")
             return
         if os.path.exists(filepath):
             df = pd.read_csv(filepath)
@@ -56,19 +56,19 @@ class ExcelUtility:
             df = pd.DataFrame(columns=df_new.columns)
 
         for _, row in df_new.iterrows():
-            token = str(row.get("Token_bought", "")).strip()
+            token = str(row.get("Token_Address", "")).strip()
             if not token:
                 continue
 
-            if token in df["Token_bought"].astype(str).values:
-                idx = df[df["Token_bought"].astype(str) == token].index[0]
+            if token in df["Token_Address"].astype(str).values:
+                idx = df[df["Token_Address"].astype(str) == token].index[0]
                 for col, val in row.items():
                     df.at[idx, col] = val
             else:
                 df = pd.concat([df, pd.DataFrame([row.to_dict()])], ignore_index=True)
 
         df.to_csv(filepath, index=False)
-        logger.debug(f"✅ Data saved to {filepath} (merged by Token_bought)")
+        logger.debug(f"✅ Data saved to {filepath} (merged by Token_Addres)")
 
     def remove_row_by_token(self, filepath: str, token_mint: str)->None:
         try:
@@ -104,7 +104,7 @@ class ExcelUtility:
             "Buy_Timestamp": timestamp_str,
             "Quote_Price": quote_price,
             "Token_sold": input_mint,
-            "Token_bought": output_mint,
+            "Token_Address": output_mint,
         }
 
     def build_simulated_buy_data(self, base_data, real_entry_price, token_received)->dict:
@@ -118,8 +118,9 @@ class ExcelUtility:
         })
         return base_data
 
-    def build_pending_buy_data(self, base_data, real_entry_price, token_received, usd_amount,  buy_signature)->dict:
+    def build_pending_buy_data(self, base_data:dict,output_mint:str, real_entry_price:float, token_received:float, usd_amount:float,  buy_signature:str)->dict:
         base_data.update({
+            "Token_Address":output_mint,
             "Real_Entry_Price": real_entry_price,
             "Entry_USD": usd_amount,
             "Token_Received": token_received,
@@ -134,10 +135,11 @@ class ExcelUtility:
         self.save_to_csv(self.OPEN_POISTIONS, f"simulated_tokens.csv", data)
         self.save_discord(data)
 
-    def build_failed_transactions(self,token_name:str,err:str):
+    def build_failed_transactions(self,token_name:str,err:str,retries:int=0):
         return{
             "token_name":token_name,
             "reason":err,
+            "retries":retries,
         }
     
     def save_failed_buy(self, data: dict)->None:
@@ -149,6 +151,7 @@ class ExcelUtility:
             "Error_Code":err,
             "Error_Message":msg
         }
+    
     def save_failed_rpc(self, data: dict)->None:
         self.save_to_csv(self.FAILED_RPC_CALLS, f"failed_rpc_calls.csv", data)
 
@@ -240,7 +243,7 @@ class ExcelUtility:
 
     def build_closed_data(self,token_mint:str,buy_signature:str,entry_price_usd:float,buy_time:float,pnl:float,current_price_usd:float,trigger:str):
         return{
-                "Token_Addres":token_mint,
+                "Token_Address":token_mint,
                 "Buy_Signature": buy_signature,
                 "Sell_Signature": "SIMULATED_SELL",
                 "Buy_Timestamp": buy_time,

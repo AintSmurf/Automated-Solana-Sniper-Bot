@@ -34,7 +34,7 @@ class TraderManager:
                 self._record_failed_token(output_mint, "Transaction send failed")
                 return None
             self.logger.info(f"✅ Buy SUCCESSFUL for {output_mint}")
-            data = self.ctx.get("excel_utility").build_pending_buy_data(base_data,real_entry_price, token_received, usd_amount, buy_signature)
+            data = self.ctx.get("excel_utility").build_pending_buy_data(base_data,output_mint,real_entry_price, token_received, usd_amount, buy_signature)
             self.ctx.get("excel_utility").save_pending_buy(data)
             future = run_bg(self.ctx.get("helius_client").verify_signature, buy_signature)
             self.pending_futures[output_mint] = future
@@ -46,7 +46,7 @@ class TraderManager:
             self._record_failed_token(input_mint, str(e))
             return None
     
-    def sell(self, input_mint: str, output_mint: str) -> str:
+    def sell(self, input_mint: str, output_mint: str, slippage_override: float = None) -> str:
         self.logger.info(f"🔄 Initiating sell order: Selling {input_mint} for {output_mint}")
         try:
             fut = self.pending_futures.get(input_mint)
@@ -70,15 +70,21 @@ class TraderManager:
                     tokens = decimal_to_lamports(lamport_amount,self.ctx.get("helius_client").get_token_decimals(input_mint))
             if tokens == 0:
                 self.logger.error(f"❌ Failed to sell {input_mint}: No balance found.")
-                self._record_failed_token(input_mint, "No balance found in wallet")
+                self._record_failed_token(input_mint, "No balance found in wallet", stage="balance")
                 return
-            data = self.ctx.get("jupiter_client").get_quote_dict(input_mint, output_mint,tokens)
+            data = self.ctx.get("jupiter_client").get_quote_dict(input_mint, output_mint, tokens, slippage_override=slippage_override)
+            if not data or "quote" not in data or "outAmount" not in data:
+                self._record_failed_token(input_mint, "Jupiter quote failed (RPC or empty data)", stage="quote")
+                return None
             quote = data["quote"]
             token_received = data["outAmount"] 
             txn_64 = self.ctx.get("jupiter_client").get_swap_transaction(quote)
+            if not txn_64:
+                self._record_failed_token(input_mint, "Swap transaction build failed (RPC error)", stage="swap_build")
+                return None
             sell_signature =self.ctx.get("helius_client").send_transaction(txn_64)
             if not sell_signature:
-                self._record_failed_token(output_mint, "Transaction send failed (likely slippage or RPC drop)")
+                self._record_failed_token(input_mint, "Transaction send failed (likely slippage or RPC drop)", stage="send_tx")
                 return None
             self.logger.info(f" Sell submited: Signature: {sell_signature}")
             sol_price = self.ctx.get("jupiter_client").get_sol_price()
@@ -91,7 +97,7 @@ class TraderManager:
 
         except Exception as e:
             self.logger.error(f"❌ Exception during sell: {e}")
-            self._record_failed_token(input_mint, str(e))
+            self._record_failed_token(input_mint, str(e), stage="exception")
             return None
     
     def _update_entry_price_with_balance(self,data:dict,output_mint: str, usd_amount: float):
@@ -121,7 +127,7 @@ class TraderManager:
     def _update_exit_with_balance(self, data: dict, token_mint: str, exit_usd: float,sell_signature: str):
         try:
             data = self.ctx.get("excel_utility").update_sell(data,exit_usd,sell_signature)
-            self.ctx.get("excel_utility").save_closed_position(data)
+            self.ctx.get("excel_utility").save_closed_poistions(data,self.ctx.settings["SIM_MODE"])
             self.logger.info(f"📊 Exit finalized for {token_mint}: ${exit_usd:.4f} USD")
             self.tracker_logger.info({
             "event": "sell",
@@ -171,7 +177,7 @@ class TraderManager:
                 data = self.ctx.get("excel_utility").build_closed_data(
                     token_mint, buy_signature, buy_price_usd, buy_time, pnl, current_price_usd, trigger
                 )
-                self.ctx.get("excel_utility").save_closed_poistions(data, True)
+                self.ctx.get("excel_utility").save_closed_poistions(data, self.ctx.settings["SIM_MODE"])
                 df = df[df["Token_bought"] != token_mint]
                 df.to_csv(file_path, index=False)
                 self.logger.info(f"🛑 SIMULATED manual close logged for {token_mint} (trigger={trigger})")
@@ -185,42 +191,70 @@ class TraderManager:
             self.logger.error(f"❌ Manual close failed for {token_mint}: {e}", exc_info=True)
             return False
 
-    def _record_failed_token(self, token_name: str, reason: str):
+    def _record_failed_token(self, token_name: str, reason: str, stage: str = "unknown"):
         try:
-            data = self.ctx.get("excel_utility").build_failed_transactions(token_name, reason)
+            data = self.ctx.get("excel_utility").build_failed_transactions(token_name, reason, retries=0)
+            data["stage"] = stage
             self.ctx.get("excel_utility").save_failed_buy(data)
-            self.logger.warning(f"⚠️ Logged failed token {token_name}: {reason}")
+            self.logger.warning(f"⚠️ Logged failed token {token_name}: {reason} (stage={stage})")
         except Exception as e:
             self.logger.error(f"❌ Failed to record failed token {token_name}: {e}", exc_info=True)
 
     def retry_failed_tokens(self):
         file = os.path.join(self.ctx.get("excel_utility").FAILED_TOKENS, "failed_tokens.csv")
         if not os.path.exists(file):
-            self.logger.info("✅ No failed tokens to retry.")
             return
 
-        df = pd.read_csv(file)
+        try:
+            df = pd.read_csv(file)
+        except Exception:
+            return
         if df.empty:
-            self.logger.info("✅ No failed tokens to retry (empty file).")
             return
 
-        retried_rows = []
+        if "retries" not in df.columns:
+            df["retries"] = 0
+
+        retried = []
+        base_slippage = float(self.ctx.settings.get("SLPG", 3.0))
 
         for _, row in df.iterrows():
-            token = row["token_name"]
-            reason = row["reason"]
-            if not isinstance(token, str) or not token.strip():
+            token = row.get("token_name")
+            retries = int(row.get("retries", 0))
+
+            if not token:
+                continue
+            if retries >= 3:
                 continue
 
-            self.logger.info(f"🔁 Retrying failed token {token} (reason: {reason})...")
+            new_slippage = base_slippage + (0.5 * (retries + 1))
+            self.logger.info(f"🔁 Retrying SELL for {token} (attempt {retries+1}/3) with slippage={new_slippage:.1f}%")
+
             try:
-                self.sell(token, "So11111111111111111111111111111111111111112")
-                retried_rows.append(token)
+                sig = self.sell(
+                    token,
+                    "So11111111111111111111111111111111111111112",
+                    slippage_override=new_slippage,
+                )
+                if sig:
+                    self.logger.info(f"✅ Retry success for {token} ({sig})")
+                    self.tracker_logger.info({"event": "sell", "token_mint": token})
+                    retried.append(token)
+                else:
+                    df.loc[df["token_name"] == token, "retries"] = retries + 1
+                    self.logger.warning(f"⚠️ Retry failed for {token}")
             except Exception as e:
-                self.logger.error(f"❌ Retry for {token} failed again: {e}")
+                df.loc[df["token_name"] == token, "retries"] = retries + 1
+                self.logger.error(f"❌ Retry exception for {token}: {e}")
 
-        if retried_rows:
-            df = df[~df["token_name"].isin(retried_rows)]
-            df.to_csv(file, index=False)
-            self.logger.info(f"✅ Cleared {len(retried_rows)} retried tokens from failed list.")
+        if retried:
+            df = df[~df["token_name"].isin(retried)]
+        df.to_csv(file, index=False)
 
+    def _retry_loop(self,retry_stop):
+        while not retry_stop.is_set():
+            try:
+                self.retry_failed_tokens()
+            except Exception as e:
+                self.logger.error(f"Retry loop error: {e}")
+            time.sleep(30)

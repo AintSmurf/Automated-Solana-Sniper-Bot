@@ -24,6 +24,10 @@ from core.transaction_manager import TransactionManager
 import queue
 from core.trade_manager import TraderManager
 from threading import Lock
+from services.sql_db_utility import SqlDBUtility
+from dao.token_dao import TokenDAO
+from dao.liquidity_dao import LiquidityDAO
+
 
 
 
@@ -43,8 +47,11 @@ class BotOrchestrator:
         # dedupe structures
         ctx.register("signature_seen", set())
         ctx.register("signature_seen_lock", Lock())
+        
 
         ctx.register("sig_to_mint", {})
+        ctx.register("pending_data", {})
+
 
         ctx.register("known_tokens", set())
         ctx.register("known_tokens_lock", Lock())
@@ -57,7 +64,13 @@ class BotOrchestrator:
         ctx.register("special_logger", LoggingHandler.get_special_debug_logger())
         ctx.register("tracker_logger", LoggingHandler.get_named_logger("tracker"))
 
-        # 2. Utilities
+        #1.1 register db and dao
+        ctx.register("sql_db", SqlDBUtility(ctx))
+        ctx.register("token_dao",TokenDAO(ctx))
+        ctx.register("liquidity_dao", LiquidityDAO(ctx))
+
+
+        # 2. Utilities  
         ctx.register("excel_utility", ExcelUtility())
         ctx.register("rug_check", RugCheckUtility())
         ctx.register("trade_counter", TradeCounter(self.settings["MAXIMUM_TRADES"]))
@@ -135,6 +148,7 @@ class BotOrchestrator:
         self._safe_run(self.helius_connector.start_ws, "WebSocket")
         self._safe_run(self.transaction_handler.run, "TxHandler", self.stops["fetcher"])
         self._safe_run(self.tracker.track_positions, "Tracker", self.stops["tracker"])
+        self._safe_run(self.ctx.get("trader")._retry_loop, "RetryLoop", self.stops["tracker"])
         self.notification_manager.start()
 
         logger.info("🚀 Bot started with all components")

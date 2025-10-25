@@ -1,14 +1,13 @@
 from services.bot_context import BotContext
 from helpers.framework_utils import lamports_to_decimal
 from config.dex_detection_rules import PUMPFUN_PROGRAM_IDS,RAYDIUM_PROGRAM_IDS,KNOWN_BASES,KNOWN_TOKENS
+import time 
 
 class LiquidityAnalyzer:
     def __init__(self, ctx: BotContext):
         self.ctx = ctx
         self.logger = ctx.get("logger")
         self.token_pools = {}
-        self.token_pools = ctx.get("excel_utility").load_pool_pdas()
-        self.logger.info(f"📂 Loaded {len(self.token_pools)} pool PDAs from Excel")
 
     def parse_liquidity_logs(self, transaction: dict, token_mint: str,pool_owner: str = None) -> dict:
         result = {
@@ -69,11 +68,14 @@ class LiquidityAnalyzer:
         token_liq_usd = token_amount * launch_price
         total_liq_usd = breakdown_usd["SOL"] + token_liq_usd
         return {
+            "token_mint": token_mint,
             "token_amount": token_amount,
             "launch_price_usd": launch_price,
             "breakdown": breakdown_usd,
             "token_liq_usd": token_liq_usd,
             "total_liq_usd": total_liq_usd,
+            "timestamp": time.time(),
+            "pool_address": result.get("pool_owner")
         }
 
     def analyze_liquidty(self, transaction: dict, token_mint: str, min_liq: float) -> bool:
@@ -96,20 +98,17 @@ class LiquidityAnalyzer:
             f"SOL side: ${sol_liq:.2f}, Token side: ${data['token_liq_usd']:.2f}, "
             f"Launch price: ${data['launch_price_usd']:.8f}"
         )
-
-        row = self.ctx.get("excel_utility").build_liquidity_csv(token_mint, data["breakdown"])
-        self.ctx.get("excel_utility").save_liquidity(row)
-
+        data["pool_address"] = pool_address
+        data["dex"] = dex
+        self.ctx.get("pending_data")[token_mint] = data
         if sol_liq >= min_liq:
             if token_mint not in self.token_pools:
                 self.token_pools[token_mint] = {"pool": pool_address, "dex": dex}
-                self.logger.info(f"💾 Pool meets threshold — saving {token_mint}")
-                self.logger.debug(f"🔍 Pool {pool_address[:6]}... detected with {sol_liq:.2f} SOL liquidity for {token_mint}")
 
-                data_excel = self.ctx.get("excel_utility").build_pda_excel(
-                    token_mint, pool_address, dex, "NEW"
+                self.logger.info(f"💾 Pool meets threshold — saving {token_mint}")
+                self.logger.debug(
+                    f"🔍 Pool {pool_address[:6]}... detected with {sol_liq:.2f} SOL liquidity for {token_mint}"
                 )
-                self.ctx.get("excel_utility").save_pool_pda(data_excel)
             return True
 
         self.logger.info(f"⛔ Low liquidity (${sol_liq:.2f}) for {token_mint}")

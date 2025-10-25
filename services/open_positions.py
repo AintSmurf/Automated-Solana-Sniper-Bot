@@ -148,6 +148,7 @@ class OpenPositionTracker:
                                     break
                                 else:
                                     self.sell_and_update(token_mint, input_mint)
+                                    break
 
                 with self.tokens_lock:
                     if self.tokens_to_remove:
@@ -201,7 +202,7 @@ class OpenPositionTracker:
 
     def check_trailing_stop(self, token_mint:str, buy_price_usd:float, current_price_usd:float, buy_time):
         sl = self.settings.get("TRAILING_STOP", 0.2)
-        min_trigger = self.settings.get("MIN_TSL_TRIGGER_MULTIPLIER", 1.5)
+        min_trigger = self.settings.get("MIN_TSL_TRIGGER_MULTIPLIER", 1.15)
 
         peak_price = self.peak_price_dict.get(token_mint, buy_price_usd)
         if current_price_usd > peak_price:
@@ -224,7 +225,7 @@ class OpenPositionTracker:
 
     def check_timeout(self, token_mint:str, buy_price_usd:float, current_price_usd:float, buy_time):
             timeout = self.settings.get("TIMEOUT_SECONDS", 30)
-            threshold = self.settings.get("TIMEOUT_PROFIT_THRESHOLD", 1.03)
+            threshold = self.settings.get("TIMEOUT_PROFIT_THRESHOLD", 1.2)
 
             try:
                 seconds_since = (datetime.now() - buy_time).total_seconds()

@@ -169,6 +169,11 @@ export SOLANA_PRIVATE_KEY=''
 export DISCORD_TOKEN=''
 export BIRD_EYE=''
 export DEX=''
+export DB_NAME=""
+export DB_HOST=""
+export DB_PORT=
+export DB_USER=""
+export DB_PASSWORD=""
 ```
 
 
