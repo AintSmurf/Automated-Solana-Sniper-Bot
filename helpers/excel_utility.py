@@ -74,7 +74,7 @@ class ExcelUtility:
         try:
             df = pd.read_csv(filepath)
             initial_len = len(df)
-            df = df[df["Token_bought"] != token_mint]
+            df = df[df["Token_Address"] != token_mint]
             df.to_csv(filepath, index=False)
 
             if len(df) < initial_len:
@@ -341,7 +341,7 @@ class ExcelUtility:
             logs.append({
                 "event": row.get("type", "").lower(),
                 "signature": row.get("Sell_Signature") or row.get("Buy_Signature"),
-                "token_mint": row.get("Token_bought"),
+                "token_mint": row.get("Token_Address"),
                 "input_mint": row.get("Token_sold"),
                 "pnl": float(row.get("PnL_%", 0)) if "PnL_%" in row else None,
             })

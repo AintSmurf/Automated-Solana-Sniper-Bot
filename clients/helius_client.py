@@ -420,6 +420,33 @@ class HeliusClient:
         except Exception as e:
             self.logger.error(f"failed to retrive transaction: {e}")   
 
+    def get_holders_amount(self, token_mint: str)->int:
+        self.logger.info(f"🔍 Checking token holders for {token_mint} using Helius...")
+
+        try:
+            self.ctx.get("helius_rl").wait()
+            self.largest_accounts_payload["id"] = self._next_id()
+            self.largest_accounts_payload["params"][0] = token_mint
+            response_json = self.helius_requests.post(
+                endpoint=self.api_key,
+                payload=self.largest_accounts_payload,
+            )
+
+            self.special_logger.debug(f"🔍 Raw Helius Largest Accounts Response: {response_json}")
+
+            result = self._assert_response_ok(response_json,f"get_largest_accounts {token_mint}")
+            holders = result["value"]
+            total_supply = self.get_token_supply(token_mint)
+
+            if total_supply == 0:
+                self.logger.error("❌ Failed to fetch token supply. Skipping analysis.")
+                return 0
+            sorted_holders = sorted(holders, key=lambda x: float(x["uiAmount"]), reverse=True)
+        except Exception as e:
+            self.logger.error(f"❌ Error fetching largest accounts from Helius: {e}")
+            return 0
+        return len(sorted_holders)
+            
     def _next_id(self) ->int:
         self._id += 1
         return self._id

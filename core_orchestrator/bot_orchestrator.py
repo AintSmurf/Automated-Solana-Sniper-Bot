@@ -29,6 +29,8 @@ from dao.token_dao import TokenDAO
 from dao.liquidity_dao import LiquidityDAO
 from dao.volume_dao import VolumeDAO
 from dao.scam_checker_dao import ScamCheckerDao
+from dao.trade_dao import TradeDAO
+from dao.signature_dao import SignatureDAO
 
 
 
@@ -72,6 +74,8 @@ class BotOrchestrator:
         ctx.register("liquidity_dao", LiquidityDAO(ctx))
         ctx.register("volume_dao", VolumeDAO(ctx))
         ctx.register("scam_checker_dao", ScamCheckerDao(ctx))
+        ctx.register("trade_dao", TradeDAO(ctx))
+        ctx.register("signatures_dao", SignatureDAO(ctx))
 
 
         # 2. Utilities  
@@ -152,7 +156,6 @@ class BotOrchestrator:
         self._safe_run(self.helius_connector.start_ws, "WebSocket")
         self._safe_run(self.transaction_handler.run, "TxHandler", self.stops["fetcher"])
         self._safe_run(self.tracker.track_positions, "Tracker", self.stops["tracker"])
-        self._safe_run(self.ctx.get("trader")._retry_loop, "RetryLoop", self.stops["tracker"])
         self.notification_manager.start()
 
         logger.info("🚀 Bot started with all components")

@@ -126,8 +126,6 @@ class ScamChecker:
             if stats["delta_volume"] > 0:
                 results["Volume_Check"] = True
                 score += 1
-            else:
-                results["Volume_Check"] = f"FAIL (ΔVol ${stats['delta_volume']:.2f})"
         except Exception as e:
             self.logger.error(f"❌ Volume check failed for {token_mint}: {e}", exc_info=True)
 
@@ -138,7 +136,9 @@ class ScamChecker:
                 score += 1
         except Exception as e:
             self.logger.error(f"❌ Market cap check failed for {token_mint}: {e}")
+        amount_of_holders = self.ctx.get("helius_client").get_holders_amount(token_mint)
         token_id = self.ctx.get("token_dao").get_token_id_by_address(token_mint)
         self.ctx.get("scam_checker_dao").insert_token_results(token_id,results["LP_Check"],results["Holders_Check"],results["Volume_Check"],results["MarketCap_Check"],score)
+        self.ctx.get("token_dao").insert_token_stats(token_id,market_cap,amount_of_holders)
         return {"score": score, "results": results}
     

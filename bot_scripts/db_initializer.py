@@ -84,7 +84,6 @@ def create_tables():
                     id SERIAL PRIMARY KEY,
                     token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
                     market_cap DOUBLE PRECISION,
-                    liquidity_usd DOUBLE PRECISION,
                     holders_count INT,
                 );
                 """)

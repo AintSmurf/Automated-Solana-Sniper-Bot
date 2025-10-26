@@ -11,9 +11,8 @@ class ScamCheckerDao:
     def insert_token_results(self, token_id: str, lp_check: bool,holders_check:bool,volume_check:bool,marketcap_check:bool,score:int):
         timestamp = get_formatted_date_str()
         sql = """
-            INSERT INTO safety_results (token_id, lp_check, holders_check,volume_check,marketcap_check,score,detected_at)
-            VALUES (%s, %s, %s,%s, %s, %s,%s, %s)
-            ON CONFLICT (token_address) DO NOTHING
+            INSERT INTO safety_results (token_id, lp_check, holders_check,volume_check,marketcap_check,score,checked_at)
+            VALUES (%s, %s, %s,%s, %s, %s,%s)
             RETURNING id;
         """
         params = (token_id, lp_check,holders_check,volume_check,marketcap_check,score,timestamp)
