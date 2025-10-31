@@ -139,7 +139,77 @@ class SettingsConfigUI(tk.Toplevel):
         self._add_entry(risk_frame, "MIN_TSL_TRIGGER_MULTIPLIER", self.settings["MIN_TSL_TRIGGER_MULTIPLIER"], "Pump multiplier to enable TSL.")
         self._add_entry(risk_frame, "TIMEOUT_SECONDS", self.settings["TIMEOUT_SECONDS"], "Max hold time (seconds) before timeout check.")
 
+                # --- Low-Latency & Wallet Hygiene ---
+        sender_frame = ttk.LabelFrame(
+            self.scrollable_frame,
+            text="⚡ Low-Latency & Wallet Hygiene",
+            style="Section.TLabelframe"
+        )
+        sender_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=20, pady=10)
+        row += 1
 
+        # DUST_THRESHOLD_USD
+        self._add_entry(
+            sender_frame,
+            "DUST_THRESHOLD_USD",
+            self.settings.get("DUST_THRESHOLD_USD", 1.0),
+            "Tokens below this USD value are treated as dust and eligible for burn + close."
+        )
+
+        # USE_SENDER config
+        use_sender = self.settings.get("USE_SENDER", {})
+        current_region = use_sender.get("REGION", "global")
+        buy_enabled = use_sender.get("BUY", False)
+        sell_enabled = use_sender.get("SELL", False)
+
+        # Region dropdown
+        ttk.Label(sender_frame, text="SENDER REGION", style="FormLabel.TLabel").grid(
+            row=10, column=0, sticky="w", padx=10, pady=(6, 2)
+        )
+
+        self.sender_region_var = tk.StringVar(value=current_region)
+        self.sender_region_dropdown = ttk.Combobox(
+            sender_frame,
+            textvariable=self.sender_region_var,
+            values=["global", "ewr", "slc", "ams", "fra", "lon", "sg", "tyo"],
+            state="readonly",
+            width=15,
+        )
+        self.sender_region_dropdown.grid(row=10, column=1, sticky="w", padx=10, pady=(6, 2))
+
+        desc_label = ttk.Label(
+            sender_frame,
+            text="Helius Sender region (maps to HELIUS_SENDER[...] in config/network.py).",
+            style="Description.TLabel",
+        )
+        desc_label.grid(row=11, column=0, columnspan=2, sticky="w", padx=10)
+
+        # BUY / SELL toggles
+        self.sender_buy_var = tk.BooleanVar(value=buy_enabled)
+        self.sender_sell_var = tk.BooleanVar(value=sell_enabled)
+
+        buy_chk = ttk.Checkbutton(
+            sender_frame,
+            text="USE_SENDER for BUY",
+            variable=self.sender_buy_var,
+            style="Dark.TCheckbutton",
+        )
+        buy_chk.grid(row=12, column=0, columnspan=2, sticky="w", padx=10, pady=4)
+
+        sell_chk = ttk.Checkbutton(
+            sender_frame,
+            text="USE_SENDER for SELL",
+            variable=self.sender_sell_var,
+            style="Dark.TCheckbutton",
+        )
+        sell_chk.grid(row=13, column=0, columnspan=2, sticky="w", padx=10, pady=4)
+
+        desc_label = ttk.Label(
+            sender_frame,
+            text="When enabled, real trades use the Helius Sender path instead of standard RPC.",
+            style="Description.TLabel",
+        )
+        desc_label.grid(row=14, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 4))
 
         # --- Exit Rules ---
         exit_frame = ttk.LabelFrame(self.scrollable_frame, text="📤 Exit Rules", style="Section.TLabelframe")
@@ -316,7 +386,6 @@ class SettingsConfigUI(tk.Toplevel):
             self.on_save()
         messagebox.showinfo("Settings Saved", "✅ Your settings have been saved successfully.")
         self.destroy()
-
 
     def _on_close(self):
         if messagebox.askyesno("Exit without saving?", "⚠️ Your changes will be lost. Continue?"):

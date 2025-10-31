@@ -1,8 +1,20 @@
 from solders.keypair import Keypair
 from solana.rpc.api import Client
-import base58
+import base58,base64
 from services.bot_context import BotContext
 from helpers.framework_utils import calculate_tokens
+from solders.pubkey import Pubkey
+from config.dex_detection_rules import KNOWN_TOKENS
+from spl.token.instructions import burn, BurnParams,close_account, CloseAccountParams
+from solders.message import MessageV0
+from spl.token.constants import TOKEN_PROGRAM_ID
+from solders.transaction import VersionedTransaction
+from solders.hash import Hash
+
+
+
+
+
 
 
 
@@ -82,8 +94,107 @@ class WalletClient:
             self.logger.error(f"❌ Failed to fetch balances: {e}", exc_info=True)
             return []
     
+    def get_token_balances(self) -> list[dict]:
+        try:
+            token_balances = calculate_tokens(self.ctx.get("helius_client").get_token_accounts_by_owner(self.get_public_key()))
+            return [b for b in token_balances if b["balance"] > 0]
+        except Exception as e:
+            self.logger.error(f"❌ Failed to fetch balances: {e}", exc_info=True)
+            return []
+    
     def get_keypair(self) -> Keypair:
-        """Return the Keypair object for signing transactions."""
         if not self.account:
             raise RuntimeError("Wallet not initialized. Call set_private_key() or create_wallet() first.")
         return self.account
+    
+    def clean_dust_tokens(self, dust_threshold_usd: float | None = None)->None:
+        closed_tokens = []
+        try:
+            helius = self.ctx.get("helius_client")
+            jupiter = self.ctx.get("jupiter_client")
+
+            if dust_threshold_usd is None:
+                dust_threshold_usd = self.ctx.settings["DUST_THRESHOLD_USD"]
+
+            wallet_pubkey = Pubkey.from_string(self.get_public_key())
+            wallet_signer = self.account
+
+            balances = self.get_token_balances()
+
+            for token in balances:
+                token_mint = token["token_mint"]
+                ui_amount = float(token["balance"])
+
+                if token_mint in KNOWN_TOKENS.values():
+                    continue
+
+                usd_value = jupiter.get_token_worth_in_usd(token_mint, ui_amount)
+                if usd_value >= dust_threshold_usd or ui_amount <= 0:
+                    continue
+
+                self.logger.info(f"🔥 Dust detected: {token_mint} (${usd_value:.6f})")
+
+                # Get correct token account for this mint
+                accounts = helius.get_token_accounts_by_owner(
+                    self.get_public_key(),
+                    token_mint
+                )
+
+                if not accounts:
+                    continue
+
+                acc = accounts[0]
+                token_account_pk = Pubkey.from_string(acc["pub_key"])
+                raw_amount = int(acc["amount"])  
+
+                # Build burn instruction
+                burn_ix = burn(
+                    BurnParams(
+                        program_id=TOKEN_PROGRAM_ID,
+                        account=token_account_pk,
+                        mint=Pubkey.from_string(token_mint),
+                        owner=wallet_pubkey,
+                        amount=raw_amount
+                    )
+                )
+
+                # Close empty account afterwards
+                close_ix = close_account(
+                    CloseAccountParams(
+                        program_id=TOKEN_PROGRAM_ID,
+                        account=token_account_pk,
+                        dest=wallet_pubkey,
+                        owner=wallet_pubkey
+                    )
+                )
+
+                # Recent blockhash
+                blockhash = helius.get_latest_blockhash()
+
+                # Build message
+                message = MessageV0.try_compile(
+                    payer=wallet_pubkey,
+                    instructions=[burn_ix, close_ix],
+                    recent_blockhash=Hash.from_string(blockhash),
+                    address_lookup_table_accounts=[]
+                )
+
+                # Sign
+                signed_tx = VersionedTransaction(message, [wallet_signer])
+                seralized_tx = bytes(signed_tx)
+                signed_tx_base64 = base64.b64encode(seralized_tx).decode("utf-8")
+
+                # Send
+                signature = helius.send_transaction(signed_tx_base64)
+                self.logger.info(f"✨ Burned & closed {token_mint}. Sig: {signature}")
+
+                closed_tokens.append(token_mint)
+
+            return closed_tokens
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ Dust cleanup failed: {e}", exc_info=True)
+            return closed_tokens
+
+
+ 

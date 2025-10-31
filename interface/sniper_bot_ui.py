@@ -21,7 +21,6 @@ class SniperBotUI(tk.Tk):
     def __init__(self,ctx:BotContext):
         super().__init__()
         self.ctx = ctx
-        self.excel_utility = ctx.get("excel_utility")
         self.settings = ctx.settings
         self.orchestrator: BotOrchestrator | None = None
         self.tracker = None
@@ -385,17 +384,19 @@ class SniperBotUI(tk.Tk):
         self.total_trades_label.config(text=trades_val)
 
     def close_trade(self, token_mint: str):
-        try:
-            success = self.ctx.get("trader").manual_close(token_mint, trigger="MANUAL_UI")
-            if success:
-                self._logging_frame.add_log({
-                    "token_mint": token_mint,
-                    "event": "sell"
-                })
-                print(f"✅ Trade closed for {token_mint}")
-            else:
-                print(f"⚠️ Could not close trade for {token_mint}")
+        def _worker():
+            tracker = self.ctx.get("open_position_tracker")
+            success = tracker.manual_close(token_mint)
 
-        except Exception as e:
-            print(f"⚠️ Failed to close trade for {token_mint}: {e}")
+            def _done():
+                if success:
+                    print(f"✅ Manual close completed for {token_mint}")
+                    self.closed_positions.refresh()
+                else:
+                    print(f"⚠️ Manual close failed for {token_mint}")
+
+            self.after(0, _done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
 

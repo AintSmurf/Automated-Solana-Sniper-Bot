@@ -1,0 +1,30 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="solana-sniper-bot",
+    version="3.4.0",
+    packages=find_packages(exclude=("tests", "docs")),
+    python_requires=">=3.10",
+    install_requires=[
+        "discord.py==2.5.2",
+        "numpy==2.2.3",
+        "pandas==2.2.3",
+        "openpyxl==3.1.5",
+        "pillow==11.3.0",
+        "psycopg2-binary==2.9.11",
+        "requests==2.32.3",
+        "base58==2.1.1",
+        "solana==0.35.0",
+        "solders==0.21.0",
+        "construct==2.10.68",
+        "construct-typing==0.5.6",
+        "websocket-client==1.8.0",
+        "websockets==10.4",
+        "python-dateutil==2.9.0.post0",
+        "pytz==2025.1",
+        "tzdata==2025.2",
+        "typing_extensions==4.12.2",
+        "colorama==0.4.6",
+        "packaging==25.0",
+    ],
+)

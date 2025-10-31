@@ -1,5 +1,6 @@
 import time
 from config.blacklist import BLACK_LIST
+from config.dex_detection_rules import KNOWN_TOKENS
 from helpers.framework_utils import run_bg,run_timer,run_prefetch
 from threading import Event
 from services.bot_context import BotContext
@@ -56,6 +57,10 @@ class TransactionManager:
             run_prefetch(self._prefetch, token_mint, name=f"prefetch-{token_mint[:6]}")      
             if token_mint in BLACK_LIST:
                 self.logger.info(f"⛔ Blacklisted token {token_mint}, skipping.")
+                return
+            
+            #if token in base tokens ignore
+            if token_mint in KNOWN_TOKENS.values():
                 return
             
             #if token has liquidity dont proccess it again
@@ -117,17 +122,22 @@ class TransactionManager:
                 self.ctx.get("trade_counter").increment()
             else:
                 self.logger.critical("💥 MAXIMUM_TRADES reached — skipping trade.")
+            
+            #get token metadata
+            name,image,_=self.ctx.get("helius_client").get_token_meta_data(token_mint)
 
 
             # Notify
             dur = self._pop_flow_duration(token_mint)
             msg = (
                 f"🟢 **New token detected**\n"
-                f"`{token_mint}`\n"
+                f"• token_name:{name}`\n"
+                f"• token_symbol: {image}`\n"
+                f"• token_address: {token_mint}`\n"
                 f"• signature: `{signature}`\n"
                 f"• 🕒 Flow duration: {dur:,.2f}\n"
             )
-            self.ctx.get("notification_manager").notify_text(msg, "live")
+            self.ctx.get("notification_manager").notify_text(msg, "new-tokens")
 
             # delayed post-buy checks
             run_timer(

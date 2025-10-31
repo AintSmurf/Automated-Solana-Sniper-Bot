@@ -4,27 +4,25 @@
   
 
 ## Overview  
-Automated Solana Sniper Bot (v3.0.0) is a modular system for real-time token detection (Helius), automated trade execution (Jupiter), and position management (tracking, exit rules). The codebase has been refactored from a monolithic SolanaManager into specialized services that are composed by a BotContext facade.
 
-- Detection layer: Helius WebSocket + transaction parsing.
+**Automated Solana Sniper Bot (v3.4.0)** is a modular, database-backed system for real-time token detection (Helius), automated trading (Jupiter), and position management (with live tracking, exit rules, and UI dashboard).  
 
-- Execution layer: Trader (formerly the large buy/sell logic) that creates, signs and optionally sends transactions via Jupiter.
+The system has evolved from CSV-based simulation to full **SQL persistence**, enabling advanced analytics, smoother UI integration, and fault-tolerant trade recovery.
 
-- Liquidity & pricing: LiquidityAnalyzer for on-chain pool parsing and price calculation.
-
-- Scam checks: ScamChecker (dedicated) and background verification threads.
-
-- Tracking: OpenPositionTracker monitors open positions and runs exit rules (TP/SL/TSL/timeout).
-
-- Orchestration: TransactionManager listens to signatures and coordinates checks / buys.
-
-- SolanaManager is now a facade — glue layer that calls the specialized services.
+### Architecture Highlights
+- **Detection layer** — Helius WebSocket stream + transaction analysis  
+- **Execution layer** — Jupiter-powered trading via `TraderManager`  
+- **Persistence layer** — PostgreSQL via `SqlDBUtility`, `TradeDAO`, `SignatureDAO`, `TokenDAO`  
+- **Tracking layer** — DB-aware `OpenPositionTracker` with exit rules (TP / SL / TSL / Timeout)  
+- **UI layer** — Tkinter-based dashboard (`SniperBotUI`) with live table view and manual controls  
+- **Orchestration** — `BotOrchestrator` wires all services, manages async tasks and shutdown  
 
 ---
 
 ## Table of Contents  
 
 - [Screenshots](#screenshots)  
+- [New in 3.4.0](#new-in-340)
 - [Prerequisites](#prerequisites)  
 - [Features](#features)  
 - [Requirements](#requirements)  
@@ -50,6 +48,11 @@ Automated Solana Sniper Bot (v3.0.0) is a modular system for real-time token det
   - slippage and mevbot not included so pnl will be abit off
 - Use mainnet only when ready for real trading; devnet is for testing only
 - Post-buy Tracking implemented  but not integrated yet under testing
+- In **real trading mode**, the bot can optionally route buy transactions through **Helius Sender** for faster inclusion. This path:
+  - Requests a legacy Jupiter swap transaction (`asLegacyTransaction = True`),
+  - Prepends a Jito-tipped Helius tip instruction,
+  - Re-signs the transaction and sends it via the Sender HTTP endpoint.
+
 
 ## Screenshots  
 
@@ -63,6 +66,47 @@ Shows bot status, wallet balance, API usage, trade settings, and real-time close
 
 Configuration panel for setting TP, SL, TSL, timeout, and enabling/disabling exit rules.  
 
+### UI POPUP
+![UI Popup](assets/popup.png)
+
+Modern fixed-size popup displaying full trade details for any position.
+
+---
+
+## New in 3.4.0
+
+- **Trade lifecycle hardening**
+  - New `SELLING` status in the `trades` table:
+    - `TraderManager.sell()` marks a trade as `SELLING` before broadcasting the swap.
+    - Prevents the reconciliation logic from treating in-flight exits as LOST.
+  - `TradeDAO.get_live_trades()` returns only logically “open” trades:
+    - `FINALIZED`, `SELLING`, `SIMULATED` (excludes `RECOVERED` / `CLOSED`).
+  - `OpenPositionTracker.has_open_positions()`:
+    - Checks in-memory `active_trades` for those statuses.
+    - Falls back to `get_live_trades()` in the DB.
+    - Ignores `RECOVERED` / `CLOSED` rows when deciding if the bot can stop.
+
+- **Safer shutdown after MAXIMUM_TRADES**
+  - When `TradeCounter` reaches `MAXIMUM_TRADES`:
+    - WebSocket + fetcher stop accepting new trades.
+    - The bot **waits** until:
+      - There are no pending signature verifications (`TraderManager.pending_futures`),
+      - No `FINALIZED` / `SELLING` / `SIMULATED` trades remain in memory,
+      - No matching live trades remain in the DB.
+    - Only then the orchestrator performs full shutdown.
+  - Fixes the edge case where the last BUY was broadcast right before shutdown and ended up finalized after the bot already exited.
+
+- **Reconciliation & dust-aware recovery**
+  - `_reconcile_wallet_with_db()` now:
+    - Uses `DUST_THRESHOLD_USD` + cached prices to ignore tiny “dust” balances.
+    - Skips tokens that are:
+      - Already in `active_trades`, or
+      - In `SELLING` status.
+    - Only:
+      - Creates `RECOVERED` trades when a non-dust token exists in the wallet but is missing in DB and not active.
+      - Marks as `LOST` when the token is gone from the wallet, not active, and not `SELLING`.
+  - Prevents false LOST/RECOVERED events during TP/SL or brief wallet/DB desyncs.
+
 
 ---
 
@@ -75,65 +119,58 @@ You'll need the following before running the bot:
 - A SOLANA_PRIVATE_KEY — wallet key  
 - A Discord bot token — for notifications  
 - A BirdEye API Key (for liquidity & price fallback) (Optional)   
+- **PostgreSQL** database for persistent trade storage
 
 ---
 
 
 ## Features  
 
-- Real-Time Token Detection 
-- Excel Logging System  
-  - `results/tokens/all_tokens_found.csv` — All detected tokens  
-  - `results/backtest/post_buy_checks.csv` — Tokens flagged during post-buy safety checks (LP lock, holders, volume, market cap)  
-  - `results/tokens/open_poistions/simulated_tokens.csv` — Active simulated token positions  
-  - `results/tokens/closed_positions/simulated_closed_positions.csv` — Simulated sells and PnL logs  
-  - `results/tokens/open_poistions/open_positions.csv` — (If applicable) active real trades  
-  - `results/tokens/closed_positions/closed_positions.csv` — (If applicable) completed real trades  
-  - `results/tokens/failed_tokens/failed_sells.csv` — Failed sell attempts after retries  
-  - `results/backtest/Pair_keys.csv` — Stores token-to-pool mapping (with DEX info and migration status)  
-  - `results/backtest/token_volume.csv` — Launch snapshot + tracked USD volume per token  
-  - `logs/matched_logs/<token>.log` — Log summary per token from `analyze.py`  
+### Core System
+- Real-time token detection via Helius WebSocket  
+- Automated Jupiter buy/sell with price simulation or execution  
+- Exit rules: TP / SL / TSL / Timeout  
+- Full multi-threaded orchestration
+- Optional low-latency execution via **Helius Sender** for real trades (Jupiter Swap API → legacy tx → tip ix → Sender HTTP endpoint)  
+- Robust trade lifecycle:
+  - Explicit `FINALIZED` / `SELLING` / `RECOVERED` / `CLOSED` states.
+  - DB–wallet reconciliation that respects in-flight exits and dust thresholds.
+  - Safe auto-shutdown once all trades and pending signatures are resolved.
 
-- Scam Protection  
-  - Mint/freeze authority audit  
-  - Honeypot & zero-liquidity protection  
-  - Tax check and centralized holder detection  
-  - Rug-pull risk detection (LP lock, mutability)  
 
-- Automated Execution via Jupiter (simulate or send transactions)  
-  - Buy/sell via Jupiter using signed base64 transactions  
-  - Auto buy mode  
-  - Handles associated token accounts automatically  
+###  Database Persistence
 
-- Post-buy Tracking & Exit Rules (TP/SL/TSL/Timeout)  
-  - Retry safety checks (e.g., LP unlock, holder distribution)  
-  - Live tracking of token price vs entry price (TP / SL / TSL / Timeout)  
+| Table               | Purpose                                                                 |
+|---------------------|-------------------------------------------------------------------------|
+| `tokens`            | Mint info and metadata (token_address, first detection signature, time) |
+| `trades`            | Each position: BUY/SELL, entry/exit USD, PnL%, trigger_reason, status, simulation flag, timestamps |
+| `signatures`        | Buy/sell signature mapping per token + buy/sell times                  |
+| `token_stats`       | Market data snapshot: market cap, holder count per token               |
+| `safety_results`    | Rug/safety checks: LP, holders, volume, marketcap flags + score        |
+| `token_volumes`     | Aggregated volume stats: buy/sell USD, counts, net flow, launch volume |
+| `liquidity_snapshots` | Time-series liquidity (SOL/USDC/USDT/USD1 + total) per token         |
+| `token_pools`       | Pool mapping: pool address, DEX source, created_at                     |
 
-- Post-Buy Safety Checks  
-  - Liquidity pool lock & mutability check  
-  - Centralized holder distribution audit  
-  - Market cap validation  
-  - Experimental volume-based filters (not fully integrated yet)  
+### Strategy Tools
+- Liquidity analyzer with on-chain pricing  
+- Volume tracker with launch snapshot  
+- Scam detection and token audit 
 
-- Logging & Reporting  
-  - CSV-based trade history and analysis  
-  - Retry failed sells with configurable limits  
+### Wallet Hygiene
 
-- Notifications  
-  - Discord alerts (live safe token alerts with price + metadata)  
-  - Planned: Telegram & Slack integration  
+- **Dust Cleaner (manual)**  
+  - `clean_dust_tokens(dust_threshold_usd=1.0)` scans your SPL balances.  
+  - Uses Jupiter to estimate per-token USD value.  
+  - For tiny positions below the threshold:
+    - Builds a `burn` ix for the full raw amount.
+    - Builds a `close_account` ix to reclaim rent.
+    - Signs and sends a compact `MessageV0` transaction via Helius.  
+  - Logs each cleaned mint and its transaction signature.
 
-- Threaded Execution  
-  - WebSocket, transaction fetcher, position tracker, and notifier run concurrently  
 
-- Log Summarization Tool (`run_analyze.py`)  
-  - Extracts time-sorted logs per token for deep analysis  
-  - Removes duplicates, merges info/debug, and creates human-readable `.log` files  
-
-### Experimental Features  
-- Volume Tracking (work in progress)  
-- Backup Chain Price Source and Birdeye (added, not fully integrated)  
-
+### 🔔 Notifications
+- Discord alerts (live detection / safe tokens)  
+- Telegram & Slack support (planned)
 
 ---
 
@@ -162,7 +199,7 @@ You'll need the following before running the bot:
 ---
 ### Credentials & Secrets
 
-The bot requires several private credentials (Helius API key, SOL private key, Discord bot token, optional BirdEye key). These should be provided via environment variables, a local `credentials.sh`/PowerShell script, or a `.sh` file — **never commit them to source control**.
+The bot requires several private credentials (Helius API key, SOL private key, Discord bot token, optional BirdEye key). These should be provided via environment variables, a local `credentials.sh`/PowerShell script, or a `.sh` file.
 ```bash
 export HELIUS_API_KEY=''
 export SOLANA_PRIVATE_KEY=''
@@ -185,7 +222,9 @@ cd Automated-Solana-Sniper-Bot/
 python -m venv venv
 source venv/bin/activate   # On Linux/macOS
 venv\Scripts\activate      # On Windows
-pip install -r requirements.txt
+python -m pip install --upgrade pip setuptools wheel
+pip install .
+python .\bot_scripts\db_initializer.py  #DB creation
 ```
 ## Running the Bot
 
@@ -242,7 +281,10 @@ python main.py --s or python main.py --server
 - Runs in headless CLI mode with zero prompts, even on first run
 - Uses whatever is saved in bot_settings.json
 - Ideal for **cloud servers, VPS, or Docker containers**
-- Auto-shutdown happens after `MAXIMUM_TRADES` is reached unless customized.
+- Auto-shutdown kicks in after `MAXIMUM_TRADES` is reached:
+  - The bot stops opening new trades,
+  - Waits for all pending signatures + open positions to fully resolve,
+  - Then performs a clean shutdown.
 - If bot_settings.json does not exist, a new one will be created using default settings
 
 ---
@@ -294,6 +336,27 @@ python main.py --ui --no-save
     "TRAILING_STOP": 0.2,             # 20% below peak price
     "MIN_TSL_TRIGGER_MULTIPLIER": 1.5,# TSL only kicks in after 1.5x
 
+    # tokens under this USD value are eligible for dust cleanup
+    "DUST_THRESHOLD_USD":1,
+
+    # Ultra-low-latency Solana transaction submission via Helius Sender,
+    # optimized for high-frequency / competitive trading.
+    "USE_SENDER": {
+        # Choose the region closest to your server for better landing speed.
+        # Available options are listed in config/network.py.
+        # maps to HELIUS_SENDER[...] in config/network.py
+        "REGION": "global",
+
+        # If True: use Helius Sender path for buy transactions.
+        # Requires enough SOL for both the swap and the Jito/Helius tip.
+        "BUY": False,
+
+        # If True: use Helius Sender path for sell transactions.
+        # Requires enough SOL for both the swap and the Jito/Helius tip.
+        "SELL": False,
+    },  
+
+
     # Exit rule toggles
     "EXIT_RULES": {
         "USE_TP": False,
@@ -335,22 +398,42 @@ python main.py --ui --no-save
     HELIUS_API_KEY=your_helius_api_key
     SOLANA_PRIVATE_KEY=your_base58_private_key 
     DISCORD_TOKEN=your_discord_bot_token 
-    BIRD_EYE_API_KEY=your_birdeye_key (optional)
+    BIRD_EYE=your_birdeye_key (optional)
     DEX="Pumpfun" or "Raydium"
+    DB_NAME="sniper_db"
+    DB_HOST="your_postgres_host"
+    DB_PORT=5432
+    DB_USER="sniper_user"
+    DB_PASSWORD="super_secret_password"
     ```
   - Prepare settings
     Since Docker runs the bot with the --s (server) flag, there are no prompts.
-    Make sure a valid bot_settings.json is already present in your project.
+    Make sure a valid bot_settings.json is already present in your project under folder config.
       - If bot_settings.json is missing, Docker will create one with default settings.
       - It’s recommended to configure it locally first and then mount it into the container.
   - Build the Docker image
     ```bash
-    docker build -f Dockerfile.bot -t solana-sniper-bot
-    ```
-  - Step 3: Run the bot inside Docker
+    docker build -f Dockerfile.bot -t solana-sniper-bot .
+    ```  
+  - Initialize the Database (one-time)
     ```bash
-    docker run solana-sniper-bot
+    docker run --rm  solana-sniper-bot bash -lc "source ./Credentials.sh && python -m bot_scripts.db_initializer"
     ```
+  - Run the bot inside Docker
+    ```bash
+    docker run --name solana-sniper-bot solana-sniper-bot
+    ```
+    The Dockerfile.bot’s default CMD does:
+    ```bash
+    bash -lc "source ./Credentials.sh && python -u main.py --server"
+    ```
+    So the bot:
+
+      - loads your credentials from Credentials.sh
+
+      - runs in server mode (headless, no prompts)
+
+      - respects MAXIMUM_TRADES and performs a clean shutdown after all trades are resolved
 
 ## Roadmap
 
@@ -360,10 +443,7 @@ python main.py --ui --no-save
   - Currently saves snapshots but accuracy still needs improvement.  
 
 - **Blacklist / Whitelist automated detection (planned)** — Automatically flags suspicious tokens or prioritizes trusted ones.  
-  - Integrated into detection and exit rule checks.  
-
-- **SQL Logging (planned)** — Replace CSV-based trade logs with a structured SQLite database.  
-  - Easier querying, analysis, and historical insights.  
+  - Integrated into detection and exit rule checks.    
 
 - **Telegram Notifications (planned)** — Send trade alerts, errors, and detection events to Telegram channels.  
 
@@ -393,11 +473,12 @@ Logs are organized for clarity and traceability:
 
 ---
 
+
 ## Log Summarization Tool
 
 This tool allows you to extract, clean, and analyze logs for one or multiple token addresses and transaction signatures.
 
-###  Functionality
+### Functionality
 
 - Searches across:
   - `logs/debug/`
@@ -408,24 +489,122 @@ This tool allows you to extract, clean, and analyze logs for one or multiple tok
   - `--token` (mint address)
 - Removes duplicate or overlapping lines
 - Sorts all matched logs chronologically
-- Outputs a clean, consolidated log to: logs/matched_logs/<token_address>.log
+- Outputs a clean, consolidated log to:  
+  `logs/matched_logs/<token_address>.log`
+
+---
+
 ### Manual Usage (One Token)
+
 To analyze a **single** token and transaction:
+```bash
+    python -m bot_scripts.analyze --signature <txn_signature> --token <token_address>
+```
+This will:
+
+- Search all configured log locations for that signature and token.
+- Deduplicate and time-sort all matches.
+- Write the results to: `logs/matched_logs/<token_address>.log`.
+
+---
+
+### Batch Usage (Multiple Tokens via DB)
+
+To analyze multiple tokens in parallel:
 
 ```bash
-python bot_scripts/analyze.py --signature <txn_signature> --token <token_address>
+    python -m bot_scripts.run_analyze [options...]
 ```
-To analyze all tokens in parallel from your results:
+
+Explanation:
+
+- Builds a DB context  
+- Queries `tokens` + `trades` via `TokenDAO.fetch_mint_signature(...)`  
+- Selects only the relevant tokens (based on filters)  
+- Runs `analyze.py` in parallel for each `(signature, token_address)` pair  
+- Uses `max_workers=10` by default  
+
+Available Options:
+
+- `--reason {lost,tp,sl,tsl,timeout,manual}`  
+  Filter by trades with a given `trigger_reason` / `exit_reason`.  
+  Examples: LOST rugs, TP (take-profit), SL (stop-loss), etc.
+
+- `--today`  
+  Only include trades from *today*  
+  (00:00 → 00:00 in the local machine's timezone).
+
+- `--since YYYY-MM-DD`  
+  Only include trades with `timestamp >=` this date (open-ended).  
+  Example: `--since 2025-11-01`
+
+- `--all`  
+  Ignore trade filters and process **all tokens** from the `tokens` table.
+
+- `--limit N`  
+  Process at most **N tokens** (useful for testing / sampling).
+
+Example commands:
+
+    # LOST tokens today
+    python -m bot_scripts.run_analyze --reason lost --today
+
+    # TP tokens since 2025-11-01
+    python -m bot_scripts.run_analyze --reason tp --since 2025-11-01
+
+    # Any tokens with trades today (any reason)
+    python -m bot_scripts.run_analyze --today
+
+    # All tokens, but only first 20
+    python -m bot_scripts.run_analyze --all --limit 20
+
+---
+
+## Summary Report Tool
+
+This tool produces an Excel summary of your trades and daily performance.
+
+To generate the summary:
 
 ```bash
-python bot_scripts/run_analyze.py 
+    python -m bot_scripts.produce_summary
 ```
-- explanation
-  - Reads results/tokens/all_tokens_found.csv
-  - Extracts logs for each Signature and Token Mint pair
-  - Runs `analyze.py` in parallel subprocesses 
-    - (uses `max_workers=10` by default; 
-    - actual concurrency depends on your CPU)
+
+Explanation:
+
+- Connects to the DB via `TokenDAO`  
+- Pulls:
+  - Detailed per-trade data  
+  - Aggregated per-session data (07:00 → next-day 07:00, local time)  
+- Writes an Excel file:  
+  `summary_results.xlsx`
+
+The Excel file currently contains:
+
+### `Summary` – per-trade details
+
+- Columns:  
+  `token`, `buy_event`, `sell_event`,  
+  `buy_price`, `sell_price`,  
+  `profit_percent`, `exit_reason`,  
+  `post_buy_score`, `marketcap`
+- Numeric columns are formatted (prices, PnL %, marketcap).
+
+### `PerSession` – per “trading day”
+
+- Trading day is defined as: **07:00 → next-day 07:00** (local timezone)
+- Columns:
+  - `session_date`
+  - `trade_count`
+  - `total_pnl_percent`
+  - `avg_pnl_percent`
+  - `winning_trades`
+  - `losing_trades`
+- Uses the PC’s local timezone offset to define sessions.
+- Lets you see:
+  - Winning/losing streaks
+  - Daily/session performance
+  - Rug-heavy days vs. good days
 
 
 ## Disclaimer

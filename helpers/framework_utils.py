@@ -7,6 +7,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import Future
 import pandas as pd
+import random
 
 
 
@@ -102,3 +103,20 @@ def decimal_to_lamports(amount: float, decimals: int) -> int:
 #date
 def get_formatted_date_str()->datetime:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def unique_recovery_sig():
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+    suffix = str(random.randint(100, 999))
+    return f"RECOVERY_{now}_{suffix}"
+
+def get_local_tz_offset_str() -> str:
+    now_local = datetime.now().astimezone()
+    offset = now_local.utcoffset()
+    if offset is None:
+        return '+00:00'
+
+    total_minutes = int(offset.total_seconds() // 60)
+    sign = '+' if total_minutes >= 0 else '-'
+    total_minutes = abs(total_minutes)
+    hours, minutes = divmod(total_minutes, 60)
+    return f'{sign}{hours:02d}:{minutes:02d}'

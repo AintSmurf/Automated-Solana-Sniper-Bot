@@ -8,7 +8,6 @@ from services.bot_context import BotContext
 from core.solana_manager import SolanaManager
 from services.volume_tracker import VolumeTracker
 from helpers.rate_limiter import RateLimiter
-from helpers.excel_utility import ExcelUtility
 from helpers.rug_check_utility import RugCheckUtility
 from services.trade_counter import TradeCounter
 from helpers.requests_utility import RequestsUtility
@@ -31,6 +30,7 @@ from dao.volume_dao import VolumeDAO
 from dao.scam_checker_dao import ScamCheckerDao
 from dao.trade_dao import TradeDAO
 from dao.signature_dao import SignatureDAO
+from config.network import HELIUS_SENDER, DEFAULT_SENDER_REGION
 
 
 
@@ -67,6 +67,8 @@ class BotOrchestrator:
         ctx.register("logger", LoggingHandler.get_logger())
         ctx.register("special_logger", LoggingHandler.get_special_debug_logger())
         ctx.register("tracker_logger", LoggingHandler.get_named_logger("tracker"))
+        ctx.register("notification_manager", NotificationManager(ctx))
+
 
         #1.1 register db and dao
         ctx.register("sql_db", SqlDBUtility(ctx))
@@ -79,7 +81,6 @@ class BotOrchestrator:
 
 
         # 2. Utilities  
-        ctx.register("excel_utility", ExcelUtility())
         ctx.register("rug_check", RugCheckUtility())
         ctx.register("trade_counter", TradeCounter(self.settings["MAXIMUM_TRADES"]))
         ctx.register("liquidity_analyzer", LiquidityAnalyzer(ctx))
@@ -90,6 +91,7 @@ class BotOrchestrator:
         ctx.register("helius_enhanced", RequestsUtility(HELIUS_ENHANCED[self.settings["NETWORK"]]))
         ctx.register("jupiter_requests", RequestsUtility(JUPITER_STATION["BASE_URL"]))
         ctx.register("birdye_requests", RequestsUtility(BIRDEYE["BASE_URL"]))
+        ctx.register("helius_sender_requests",RequestsUtility(HELIUS_SENDER[self.settings["USE_SENDER"]["REGION"]]))
 
 
         # 4. Domain clients
@@ -106,7 +108,6 @@ class BotOrchestrator:
         # 6. Supporting services
         ctx.register("volume_tracker", VolumeTracker(ctx))
         ctx.register("open_position_tracker", OpenPositionTracker(ctx))
-        ctx.register("notification_manager", NotificationManager(ctx))
 
 
         self.logger = ctx.get("logger")

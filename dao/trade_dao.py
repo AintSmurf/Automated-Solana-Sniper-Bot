@@ -56,25 +56,18 @@ class TradeDAO:
                 t.simulation
             FROM trades t
             JOIN tokens tok ON t.token_id = tok.id
-            WHERE t.status IN ('OPEN', 'CONFIRMED', 'FINALIZED', 'SIMULATED')
+            WHERE t.status IN ('FINALIZED', 'SELLING', 'SIMULATED', 'RECOVERED')
             AND t.simulation = %s;
         """
         return self.sql_helper.execute_select(sql, (sim_mode,))
 
-    def update_trade_status(self, trade_id: int, status: str,
-                            confirmed_at=None, finalized_at=None):
-        current_ts = datetime.now(timezone.utc)
-        confirmed_at = confirmed_at or current_ts
-        finalized_at = finalized_at or current_ts
-
+    def update_trade_status(self, trade_id: int, status: str):
         sql = """
             UPDATE trades
-            SET status = %s,
-                confirmed_at = COALESCE(%s, confirmed_at),
-                finalized_at = COALESCE(%s, finalized_at)
+            SET status = %s
             WHERE id = %s;
         """
-        params = (status, confirmed_at, finalized_at, trade_id)
+        params = (status,trade_id)
         self.sql_helper.execute_update(sql, params)
 
     def update_exit_data(self, trade_id: int, trigger_reason: str):
@@ -101,3 +94,21 @@ class TradeDAO:
         sql = "SELECT * FROM trades WHERE id = %s"
         rows = self.sql_helper.execute_select(sql, (trade_id,))
         return rows[0] if rows else None
+    
+    def get_live_trades(self, sim_mode: bool = False):
+        sql = """
+            SELECT 
+                t.id,
+                t.token_id,
+                tok.token_address,
+                t.trade_type,
+                t.entry_usd,
+                t.timestamp,
+                t.simulation,
+                t.status
+            FROM trades t
+            JOIN tokens tok ON t.token_id = tok.id
+            WHERE t.status IN ('FINALIZED', 'SELLING', 'SIMULATED')
+            AND t.simulation = %s;
+        """
+        return self.sql_helper.execute_select(sql, (sim_mode,))

@@ -1,0 +1,25 @@
+# Python artefacts
+__pycache__/
+*.pyc
+
+# Virtual environments
+venv/
+.env/
+
+# Logs
+logs/
+logs/**
+
+# Results / exports
+results/
+*.log
+
+# Git / IDE
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# OS junk
+.DS_Store
+Thumbs.db

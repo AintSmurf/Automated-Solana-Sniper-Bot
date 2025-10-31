@@ -5,6 +5,7 @@ import time
 
 
 
+
 class HeliusClient:
     
     def __init__(self, ctx:BotContext):
@@ -28,7 +29,9 @@ class HeliusClient:
         self.account_balance = get_payload("Account_balance")
         self.get_signature_status = get_payload("Get_signature_statuses")
         self.helius_enhanced_payload = get_payload("Enhanced_transactions")
-    
+        self.latest_blockhash = get_payload("Latest_blockhash")
+        self.sender_transaction_payload = get_payload("Sender_transaction")
+
     def get_balance(self,pubkey: str)->int:
         self.account_balance["id"] = self._next_id()
         self.account_balance["params"][0] = pubkey
@@ -49,10 +52,13 @@ class HeliusClient:
                     self.logger.error(f"❌ Failed to retrive balance: {e}", exc_info=True)
                     return 0
     
-    def get_token_accounts_by_owner(self, pubkey: str)->dict:
+    def get_token_accounts_by_owner(self, pubkey: str,mint: str = None)->dict:
         self.token_account_by_owner["id"] = self._next_id()
         self.token_account_by_owner["params"][0] = pubkey
-        self.token_account_by_owner["params"][1]["programId"] = str(SPL_TOKEN_PROGRAM_ID)
+        if mint:
+             self.token_account_by_owner["params"][1]={"mint": mint}
+        else:
+            self.token_account_by_owner["params"][1]["programId"] = str(SPL_TOKEN_PROGRAM_ID)
 
         try:
             self.ctx.get("helius_rl").wait()
@@ -77,6 +83,7 @@ class HeliusClient:
                     "mint": parsed_info["mint"],
                     "amount": int(ta["amount"]),
                     "decimals": int(ta["decimals"]),
+                    "pub_key":acc["pubkey"] 
                 })
             return reserves
         except Exception as e:
@@ -161,47 +168,50 @@ class HeliusClient:
             self.logger.error(f"❌ Error simulating transaction: {e}")
             return False
     
-    def verify_signature(self, signature: str) -> str | None:
-        max_retries = 10   
-        delay = 2          
-
+    def verify_signature(self, signature: str, max_retries: int = 30, delay: float = 3.0) -> str:
+        confirmed_count = 0
         for attempt in range(1, max_retries + 1):
             try:
                 self.ctx.get("helius_rl").wait()
                 self.get_signature_status["params"][0] = [signature]
                 self.get_signature_status["id"] = self._next_id()
 
-                response = self.helius_requests.post(
-                    endpoint=self.api_key,
-                    payload=self.get_signature_status,
-                )
-
+                response = self.helius_requests.post(endpoint=self.api_key, payload=self.get_signature_status)
                 result = self._assert_response_ok(response, f"verify_signature {signature}")
                 if not result:
-                    time.sleep(delay)
-                    continue
+                    time.sleep(delay); continue
 
                 status_data = result.get("value", [None])[0]
                 if not status_data:
-                    self.logger.warning(f"⚠️ Empty status for signature {signature} (attempt {attempt})")
-                    time.sleep(delay)
-                    continue
+                    time.sleep(delay); continue
+
+                if status_data.get("err") is not None:
+                    self.logger.error(f"❌ Signature {signature} failed on-chain")
+                    return "failed"
 
                 status = status_data.get("confirmationStatus")
-                if status in ("confirmed", "finalized"):
-                    self.logger.info(f"✅ Signature {signature} {status}")
-                    return status
 
-                # Still pending or processed
-                self.logger.debug(f"⏳ Signature {signature} still {status} (attempt {attempt})")
+                if status == "finalized":
+                    self.logger.info(f"✅ Signature {signature} finalized on-chain")
+                    return "finalized"
+
+                if status == "confirmed":
+                    confirmed_count += 1
+                    self.logger.info(f"🟡 Signature {signature} confirmed (count={confirmed_count})")
+                    if confirmed_count >= 3:
+                        self.logger.info(f"✅ Signature {signature} consistently confirmed — treating as finalized")
+                        return "confirmed"
+                    time.sleep(3); continue
+
+                self.logger.debug(f"⏳ Signature {signature} still {status or 'pending'} (attempt {attempt})")
                 time.sleep(delay)
 
             except Exception as e:
-                self.logger.error(f"❌ Error verifying signature {signature} (attempt {attempt}): {e}", exc_info=True)
+                self.logger.error(f"❌ Error verifying signature {signature}: {e}", exc_info=True)
                 time.sleep(delay)
 
-        self.logger.error(f"❌ Failed to verify signature {signature} after {max_retries} attempts")
-        return None
+        self.logger.error(f"❌ Signature {signature} timed out after {max_retries * delay:.0f}s with no finalization")
+        return "timeout"
 
     def get_token_supply(self, token_address: str)->int:
         self.logger.info(f"🔍 retriving token supply for {token_address} using Helius...")
@@ -219,6 +229,23 @@ class HeliusClient:
         except Exception as e:
             self.logger.error(f"❌ Error fetching token data: {e}")
             return 0
+    
+    def get_latest_blockhash(self)->str:
+        self.logger.info(f"🔍 retriving latest blockhash using Helius...")
+        self.ctx.get("helius_rl").wait()
+        self.latest_blockhash["id"] = self._next_id()
+        response_json = self.helius_requests.post(
+                endpoint=self.api_key,
+                payload= self.latest_blockhash,
+            )
+        try:
+            result = self._assert_response_ok(response_json, f"get_latest_blockhash")
+            blockhash = result["value"]["blockhash"]
+            self.logger.debug(f"🔗 Latest blockhash: {blockhash}")
+            return blockhash
+        except Exception as e:
+            self.logger.error(f"❌ Failed to fetch latest blockhash: {e}", exc_info=True)
+            return None
     
     def get_recent_transactions_signatures_for_token(self, token_mint: str,until:str=None,before:str=None) -> list[str]:
         try:     
@@ -360,14 +387,6 @@ class HeliusClient:
         try:
             # 1️⃣ Type check
             if not isinstance(response, dict):
-                self.logger.error(f"❌ {description}: Expected dict, got {type(response)}")
-
-                fail_data = self.ctx.get("excel_utility").build_failed_rpc_calls(
-                    description,
-                    "INVALID_TYPE",
-                    f"Expected dict, got {type(response)}"
-                )
-                self.ctx.get("excel_utility").save_failed_rpc(fail_data)
                 return None
             if "error" in response:
                 err = response["error"]
@@ -376,35 +395,14 @@ class HeliusClient:
                 data = err.get("data", "No data")
 
                 self.logger.error(f"❌ {description}: RPC error {code}: {msg} | data={data}")
-
-                fail_data = self.ctx.get("excel_utility").build_failed_rpc_calls(
-                    description,
-                    str(code),
-                    f"{msg} | data={data}"
-                )
-                self.ctx.get("excel_utility").save_failed_rpc(fail_data)
                 return None
             if "result" not in response:
                 self.logger.error(f"❌ {description}: Missing 'result' key. Full response: {response}")
-
-                fail_data = self.ctx.get("excel_utility").build_failed_rpc_calls(
-                    description,
-                    "NO_RESULT_KEY",
-                    str(response)
-                )
-                self.ctx.get("excel_utility").save_failed_rpc(fail_data)
                 return None
             return response["result"]
 
         except Exception as e:
             self.logger.error(f"❌ {description}: unexpected error: {e}", exc_info=True)
-
-            fail_data = self.ctx.get("excel_utility").build_failed_rpc_calls(
-                description,
-                "EXCEPTION",
-                str(e)
-            )
-            self.ctx.get("excel_utility").save_failed_rpc(fail_data)
             return None
 
     def get_enhanced_transactions_by_address(self,PDA:str):
@@ -446,7 +444,31 @@ class HeliusClient:
             self.logger.error(f"❌ Error fetching largest accounts from Helius: {e}")
             return 0
         return len(sorted_holders)
-            
+
+    def send_via_sender(self, signed_tx_base64: str) -> str | None:
+        try:
+            self.sender_transaction_payload["id"] = self._next_id()
+            self.sender_transaction_payload["params"][0] = signed_tx_base64
+
+            self.logger.debug(f"🚀 Sending TX via Helius Sender ...")
+            response_json = self.ctx.get("helius_sender_requests").post(
+                endpoint="",
+                payload=self.sender_transaction_payload
+            )
+
+            result = self._assert_response_ok(response_json, "send_via_sender")
+
+            if not result:
+                self.logger.error(f"❌ Sender failed. Response: {response_json}")
+                return None
+
+            self.logger.info(f"✅ Sender TX broadcast — signature: {result}")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"❌ Exception in send_via_sender: {e}", exc_info=True)
+            return None
+
     def _next_id(self) ->int:
         self._id += 1
         return self._id

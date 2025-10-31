@@ -1,0 +1,9 @@
+{
+    "jsonrpc": "2.0",
+    "id": "ID_PLACE_HOLDER",
+    "method": "getLatestBlockhash",
+    "params": [
+        {"commitment": "finalized"}
+        
+    ]
+}

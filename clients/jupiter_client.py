@@ -1,10 +1,20 @@
 
 from config.third_parties import JUPITER_STATION
+from config.dex_detection_rules import FEE_WALLETS 
 from services.bot_context import BotContext
 from helpers.framework_utils import decimal_to_lamports,lamports_to_decimal,get_payload
 from solders.transaction import VersionedTransaction  # type: ignore
-import base64
+from solders.system_program import TransferParams, transfer
+import random, base64
+from solders.pubkey import Pubkey# type: ignore
+from solders.instruction import Instruction, AccountMeta
+from solders.pubkey import Pubkey
+from solders.transaction import VersionedTransaction, Transaction
+from solders.message import Message
+import requests
 
+
+LAMPORTS_PER_SOL = 1_000_000_000
 
 
 class JupiterClient:
@@ -57,7 +67,7 @@ class JupiterClient:
                 raw_bytes = base64.b64decode(swap_txn_base64)
                 raw_tx = VersionedTransaction.from_bytes(raw_bytes)
                 signed_tx = VersionedTransaction(raw_tx.message, [self.ctx.get("wallet_client").get_keypair()])
-                self.logger.info( f"Signed transaction for Wallet address: {self.ctx.get("wallet_client").get_private_key()}")
+                self.logger.info(f"Signed transaction for Wallet: {self.ctx.get('wallet_client').get_public_key()}")
                 seralized_tx = bytes(signed_tx)
                 signed_tx_base64 = base64.b64encode(seralized_tx).decode("utf-8")
                 self.logger.debug(f"signed base64 transaction: {signed_tx_base64}")
@@ -75,6 +85,83 @@ class JupiterClient:
             self.logger.error(f"❌ Error building swap transaction: {e}")
             return None
     
+    def get_swap_transaction_for_sender(self, quote_response: dict) -> str | None:
+        try:
+            # Respect Jupiter rate limit
+            self.ctx.get("jupiter_rl").wait()
+            wallet_client = self.ctx.get("wallet_client")
+            keypair = wallet_client.get_keypair()
+            user_pubkey = Pubkey.from_string(str(wallet_client.get_public_key()))
+            self.swap_payload["userPublicKey"] = str(user_pubkey)
+            self.swap_payload["quoteResponse"] = quote_response
+            self.swap_payload["asLegacyTransaction"] = True 
+
+            swap_response = self.jupiter_requests.post(
+                endpoint=JUPITER_STATION["SWAP_ENDPOINT"],
+                payload=self.swap_payload,
+            )
+            swap_txn_base64 = swap_response["swapTransaction"]
+            self.logger.debug(f"Raw Jupiter swap response: {swap_response}")
+
+            raw_bytes = base64.b64decode(swap_txn_base64)
+            raw_tx = VersionedTransaction.from_bytes(raw_bytes)
+            msg_any = raw_tx.message 
+
+            msg: Message = msg_any 
+
+            jup_instructions: list[Instruction] = []
+            for ci in msg.instructions:
+                program_id = msg.account_keys[ci.program_id_index]
+
+                account_metas = [
+                    AccountMeta(
+                        pubkey=msg.account_keys[i],
+                        is_signer=(i < msg.header.num_required_signatures),
+                        is_writable=(
+                            i < len(msg.account_keys) - msg.header.num_readonly_unsigned_accounts
+                        ),
+                    )
+                    for i in ci.accounts
+                ]
+
+                jup_instructions.append(
+                    Instruction(program_id=program_id, data=ci.data, accounts=account_metas)
+                )
+
+            tip_wallet_str = random.choice(list(FEE_WALLETS.values()))
+            tip_wallet = Pubkey.from_string(tip_wallet_str)
+            tip_sol = self._get_dynamic_tip_sol()
+
+            lamports = int(tip_sol * LAMPORTS_PER_SOL)
+            tip_ix = transfer(
+                TransferParams(
+                    from_pubkey=user_pubkey,
+                    to_pubkey=tip_wallet,
+                    lamports=lamports,
+                )
+            )
+            all_instructions: list[Instruction] = [
+                tip_ix,
+                *jup_instructions,
+            ]
+            new_message = Message(
+                instructions=all_instructions,
+                payer=user_pubkey,
+            )
+            new_tx = Transaction(
+                message=new_message,
+                from_keypairs=[keypair],
+                recent_blockhash=msg.recent_blockhash
+            )
+
+            signed_tx_base64 = base64.b64encode(bytes(new_tx)).decode("utf-8")
+            self.logger.info(f"✅ Added {tip_sol:.6f} SOL tip → {tip_wallet_str}")
+            return signed_tx_base64
+
+        except Exception as e:
+            self.logger.error(f"❌ Error building swap transaction for sender: {e}")
+            return None
+
     def get_token_price(self, mint: str) -> float:
         self.ctx.get("jupiter_rl").wait()   
         endpoint = f"{JUPITER_STATION['PRICE']}?ids={mint}&showExtraInfo=true"
@@ -97,3 +184,22 @@ class JupiterClient:
                 self.logger.warning(f"No price for {mint}: {data}")
                 prices[mint] = None
         return prices
+
+    def get_token_worth_in_usd(self, mint: str, token_amount: float) -> float:
+        usd_price = self.get_token_price(mint)
+        return token_amount * usd_price
+
+    def _get_dynamic_tip_sol(self) -> float:
+        try:
+            resp = requests.get(
+                "https://bundles.jito.wtf/api/v1/bundles/tip_floor",
+                timeout=2,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            tip_75 = float(data[0].get("landed_tips_75th_percentile", 0.0))
+            tip_sol = max(tip_75, 0.001)
+            return tip_sol
+        except Exception as e:
+            self.logger.warning(f"⚠️ Failed to fetch dynamic Jito tip, falling back to 0.001 SOL: {e}")
+            return 0.001

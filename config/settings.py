@@ -21,12 +21,21 @@ DEFAULT_SETTINGS = {
     "TIMEOUT_SECONDS": 60,
     "TIMEOUT_PROFIT_THRESHOLD": 1.03,
 
-    # Trading logic thresholds
+    # Trading logic thresholds 
     "SLPG":3.0,
     "TP": 4.0,                              
     "SL": 0.25,                             
     "TRAILING_STOP": 0.2,                   
-    "MIN_TSL_TRIGGER_MULTIPLIER": 1.5,      
+    "MIN_TSL_TRIGGER_MULTIPLIER": 1.5,
+    
+    # tokens under this USD value are eligible for dust cleanup
+    "DUST_THRESHOLD_USD":1,
+
+    # Ultra-low latency Solana transaction submission optimized for high-frequency trading.
+    "USE_SENDER": {
+    "REGION":"global",
+    "BUY": False,
+    "SELL": False},      
 
     # ✅ Exit rule toggles
     "EXIT_RULES": {

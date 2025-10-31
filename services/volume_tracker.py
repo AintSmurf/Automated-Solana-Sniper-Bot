@@ -36,11 +36,6 @@ class VolumeTracker:
             "last_buy": 0.0,
             "last_sell": 0.0,
         }
-
-        data = self.ctx.get("excel_utility").build_snapshot_volume_launch(
-            token_mint, timestamp, first_trade_usd, signature
-        )
-        self.ctx.get("excel_utility").save_volume_snapshot(data)
   
     def stats(self, token_mint: str, window=300) -> dict:
         now = time.time()

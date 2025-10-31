@@ -32,7 +32,7 @@ class NotificationManager:
         self.thread.start()
         self.logger.info("💬 Notification manager started")
 
-    def notify_text(self, message: str, channel_hint: str = "solana_tokens"):
+    def notify_text(self, message: str, channel_hint: str = "live"):
         """Public API — send a message to all notifiers."""
         if not self.loop:
             self.logger.warning("⚠️ Notification loop not running")
