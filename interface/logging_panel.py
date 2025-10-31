@@ -6,6 +6,8 @@ import requests
 from PIL import Image, ImageTk, ImageDraw
 import io
 import os
+from interface.ui_popup_helper import UIPopupHelper
+
 
 
 class LoggingPanel(tk.Frame):
@@ -202,48 +204,20 @@ class LoggingPanel(tk.Frame):
             except Exception:
                 pass
             self.after_id = None
-
+    
     def _on_double_click(self, event):
         item_id = self.tree.identify_row(event.y)
-        col = self.tree.identify_column(event.x)
-        if not item_id or col == "#0":
+        if not item_id:
             return
 
-        col_index = int(col[1:]) - 1
-        x, y, width, height = self.tree.bbox(item_id, col)
+        token_mint = next((t for t, iid in self.active_logs.items() if iid == item_id), None)
+        if not token_mint:
+            return
 
-        old_val = self.tree.item(item_id, "values")[col_index]
+        values = self.tree.item(item_id, "values")
+        headers = ["Token", "Entry Price", "Current Price", "PnL (%)", "Action"]
+        UIPopupHelper.show_detail_popup(f"📊 {values[0]} Details", headers, values, token_mint, master=self)
 
-        # highlight row while editing
-        self.tree.tag_configure("editing", background="#333333")
-        self.tree.item(item_id, tags=("editing",))
-
-        entry = tk.Entry(
-            self.tree,
-            bg=BG_COLOR,
-            fg=FG_COLOR_WHITE,
-            insertbackground="cyan",
-            relief="solid",
-            borderwidth=1
-        )
-        entry.insert(0, old_val)
-        entry.place(x=x, y=y, width=width, height=height)
-        entry.focus()
-
-        def save_edit(event=None):
-            new_val = entry.get()
-            values = list(self.tree.item(item_id, "values"))
-            values[col_index] = new_val
-            self.tree.item(item_id, values=values)
-            entry.destroy()
-            self.tree.item(item_id, tags=())  # remove editing highlight
-            self.tree.focus(item_id)
-            self.tree.selection_set(item_id)
-            self.tree.update_idletasks()
-
-        entry.bind("<Return>", save_edit)
-        entry.bind("<Escape>", lambda e: (entry.destroy(), self.tree.item(item_id, tags=()), self.tree.update_idletasks()))
-    
     def _copy_selected(self, event=None):
         try:
             item_id = self.tree.selection()[0]

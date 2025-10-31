@@ -4,27 +4,25 @@
   
 
 ## Overview  
-Automated Solana Sniper Bot (v3.0.0) is a modular system for real-time token detection (Helius), automated trade execution (Jupiter), and position management (tracking, exit rules). The codebase has been refactored from a monolithic SolanaManager into specialized services that are composed by a BotContext facade.
 
-- Detection layer: Helius WebSocket + transaction parsing.
+**Automated Solana Sniper Bot (v3.2.0)** is a modular, database-backed system for real-time token detection (Helius), automated trading (Jupiter), and position management (with live tracking, exit rules, and UI dashboard).  
 
-- Execution layer: Trader (formerly the large buy/sell logic) that creates, signs and optionally sends transactions via Jupiter.
+The system has evolved from CSV-based simulation to full **SQL persistence**, enabling advanced analytics, smoother UI integration, and fault-tolerant trade recovery.
 
-- Liquidity & pricing: LiquidityAnalyzer for on-chain pool parsing and price calculation.
-
-- Scam checks: ScamChecker (dedicated) and background verification threads.
-
-- Tracking: OpenPositionTracker monitors open positions and runs exit rules (TP/SL/TSL/timeout).
-
-- Orchestration: TransactionManager listens to signatures and coordinates checks / buys.
-
-- SolanaManager is now a facade — glue layer that calls the specialized services.
+### Architecture Highlights
+- **Detection layer** — Helius WebSocket stream + transaction analysis  
+- **Execution layer** — Jupiter-powered trading via `TraderManager`  
+- **Persistence layer** — PostgreSQL via `SqlDBUtility`, `TradeDAO`, `SignatureDAO`, `TokenDAO`  
+- **Tracking layer** — DB-aware `OpenPositionTracker` with exit rules (TP / SL / TSL / Timeout)  
+- **UI layer** — Tkinter-based dashboard (`SniperBotUI`) with live table view and manual controls  
+- **Orchestration** — `BotOrchestrator` wires all services, manages async tasks and shutdown  
 
 ---
 
 ## Table of Contents  
 
 - [Screenshots](#screenshots)  
+- [New in 3.2.0](#new-in-320)
 - [Prerequisites](#prerequisites)  
 - [Features](#features)  
 - [Requirements](#requirements)  
@@ -63,6 +61,45 @@ Shows bot status, wallet balance, API usage, trade settings, and real-time close
 
 Configuration panel for setting TP, SL, TSL, timeout, and enabling/disabling exit rules.  
 
+# UI POPUP
+![UI Popup](assets/popup.png)
+
+Modern fixed-size popup displaying full trade details for any position.
+---
+
+## New in 3.2.0
+
+-  **PostgreSQL integration**  
+  - Persistent `trades`, `signatures`, and `tokens` tables  
+  - Reconnects automatically and rolls back failed inserts safely  
+  - Each trade stores entry/exit USD, PnL%, trigger reason, timestamps  
+
+-  **DAO Layer**  
+  - `TradeDAO`, `SignatureDAO`, and `TokenDAO` isolate DB logic  
+  - Unique signature tracking for each simulated or real trade  
+  - Prevents duplicates using safe UPSERT pattern  
+
+- **UI Overhaul (`SniperBotUI`)**  
+  - Responsive layout with separate Live & Closed Panels  
+  - Real-time refresh (wallets, APIs, trades)  
+  - Start / Stop / Settings / Refresh controls  
+  - Manual close for open trades directly from UI  
+
+-  **New LoggingPanel**  
+  - Thread-safe queue updates  
+  - Live filtering + hover highlighting  
+  - ❌ *Close Trade* action column  
+  - Instant removal of sold tokens  
+
+-  **Improved Simulation Mode**  
+  - Every simulated trade gets unique signature (`SIMULATED_BUY_<timestamp>`)  
+  - No duplicate key errors  
+  - Uniform handling across real & simulated pipelines  
+
+-  **Better Exit Rule Evaluation**  
+  - All open trades are synced from database  
+  - Timeout, trailing stop, and TP logic are time-aware (UTC)  
+  - Clean removal after sell or timeout exit  
 
 ---
 
@@ -75,65 +112,34 @@ You'll need the following before running the bot:
 - A SOLANA_PRIVATE_KEY — wallet key  
 - A Discord bot token — for notifications  
 - A BirdEye API Key (for liquidity & price fallback) (Optional)   
+- **PostgreSQL** database for persistent trade storage
 
 ---
 
 
 ## Features  
 
-- Real-Time Token Detection 
-- Excel Logging System  
-  - `results/tokens/all_tokens_found.csv` — All detected tokens  
-  - `results/backtest/post_buy_checks.csv` — Tokens flagged during post-buy safety checks (LP lock, holders, volume, market cap)  
-  - `results/tokens/open_poistions/simulated_tokens.csv` — Active simulated token positions  
-  - `results/tokens/closed_positions/simulated_closed_positions.csv` — Simulated sells and PnL logs  
-  - `results/tokens/open_poistions/open_positions.csv` — (If applicable) active real trades  
-  - `results/tokens/closed_positions/closed_positions.csv` — (If applicable) completed real trades  
-  - `results/tokens/failed_tokens/failed_sells.csv` — Failed sell attempts after retries  
-  - `results/backtest/Pair_keys.csv` — Stores token-to-pool mapping (with DEX info and migration status)  
-  - `results/backtest/token_volume.csv` — Launch snapshot + tracked USD volume per token  
-  - `logs/matched_logs/<token>.log` — Log summary per token from `analyze.py`  
+### ⚙️ Core System
+- Real-time token detection via Helius WebSocket  
+- Automated Jupiter buy/sell with price simulation or execution  
+- Exit rules: TP / SL / TSL / Timeout  
+- Full multi-threaded orchestration  
 
-- Scam Protection  
-  - Mint/freeze authority audit  
-  - Honeypot & zero-liquidity protection  
-  - Tax check and centralized holder detection  
-  - Rug-pull risk detection (LP lock, mutability)  
+### 💾 Database Persistence
+| Table | Purpose |
+|--------|----------|
+| `tokens` | Mint info and metadata |
+| `trades` | Each buy/sell with USD values, timestamps, PnL% |
+| `signatures` | Buy/sell signature mapping + confirmation times |
 
-- Automated Execution via Jupiter (simulate or send transactions)  
-  - Buy/sell via Jupiter using signed base64 transactions  
-  - Auto buy mode  
-  - Handles associated token accounts automatically  
+### 🧠 Strategy Tools
+- Liquidity analyzer with on-chain pricing  
+- Volume tracker with launch snapshot  
+- Scam detection and token audit  
 
-- Post-buy Tracking & Exit Rules (TP/SL/TSL/Timeout)  
-  - Retry safety checks (e.g., LP unlock, holder distribution)  
-  - Live tracking of token price vs entry price (TP / SL / TSL / Timeout)  
-
-- Post-Buy Safety Checks  
-  - Liquidity pool lock & mutability check  
-  - Centralized holder distribution audit  
-  - Market cap validation  
-  - Experimental volume-based filters (not fully integrated yet)  
-
-- Logging & Reporting  
-  - CSV-based trade history and analysis  
-  - Retry failed sells with configurable limits  
-
-- Notifications  
-  - Discord alerts (live safe token alerts with price + metadata)  
-  - Planned: Telegram & Slack integration  
-
-- Threaded Execution  
-  - WebSocket, transaction fetcher, position tracker, and notifier run concurrently  
-
-- Log Summarization Tool (`run_analyze.py`)  
-  - Extracts time-sorted logs per token for deep analysis  
-  - Removes duplicates, merges info/debug, and creates human-readable `.log` files  
-
-### Experimental Features  
-- Volume Tracking (work in progress)  
-- Backup Chain Price Source and Birdeye (added, not fully integrated)  
-
+### 🔔 Notifications
+- Discord alerts (live detection / safe tokens)  
+- Telegram & Slack support (planned)
 
 ---
 
@@ -162,7 +168,7 @@ You'll need the following before running the bot:
 ---
 ### Credentials & Secrets
 
-The bot requires several private credentials (Helius API key, SOL private key, Discord bot token, optional BirdEye key). These should be provided via environment variables, a local `credentials.sh`/PowerShell script, or a `.sh` file — **never commit them to source control**.
+The bot requires several private credentials (Helius API key, SOL private key, Discord bot token, optional BirdEye key). These should be provided via environment variables, a local `credentials.sh`/PowerShell script, or a `.sh` file.
 ```bash
 export HELIUS_API_KEY=''
 export SOLANA_PRIVATE_KEY=''
@@ -186,6 +192,7 @@ python -m venv venv
 source venv/bin/activate   # On Linux/macOS
 venv\Scripts\activate      # On Windows
 pip install -r requirements.txt
+python .\bot_scripts\db_initializer.py  #DB creation
 ```
 ## Running the Bot
 
@@ -360,10 +367,7 @@ python main.py --ui --no-save
   - Currently saves snapshots but accuracy still needs improvement.  
 
 - **Blacklist / Whitelist automated detection (planned)** — Automatically flags suspicious tokens or prioritizes trusted ones.  
-  - Integrated into detection and exit rule checks.  
-
-- **SQL Logging (planned)** — Replace CSV-based trade logs with a structured SQLite database.  
-  - Easier querying, analysis, and historical insights.  
+  - Integrated into detection and exit rule checks.    
 
 - **Telegram Notifications (planned)** — Send trade alerts, errors, and detection events to Telegram channels.  
 

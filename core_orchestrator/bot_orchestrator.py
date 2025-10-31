@@ -8,7 +8,6 @@ from services.bot_context import BotContext
 from core.solana_manager import SolanaManager
 from services.volume_tracker import VolumeTracker
 from helpers.rate_limiter import RateLimiter
-from helpers.excel_utility import ExcelUtility
 from helpers.rug_check_utility import RugCheckUtility
 from services.trade_counter import TradeCounter
 from helpers.requests_utility import RequestsUtility
@@ -79,7 +78,6 @@ class BotOrchestrator:
 
 
         # 2. Utilities  
-        ctx.register("excel_utility", ExcelUtility())
         ctx.register("rug_check", RugCheckUtility())
         ctx.register("trade_counter", TradeCounter(self.settings["MAXIMUM_TRADES"]))
         ctx.register("liquidity_analyzer", LiquidityAnalyzer(ctx))

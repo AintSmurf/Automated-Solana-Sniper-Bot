@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk
 from interface.styling import *
+from interface.ui_popup_helper import UIPopupHelper
+
 
 class ClosedPositionsPanel(tk.Frame):
     def __init__(self, parent, ctx, **kwargs):
@@ -38,32 +40,51 @@ class ClosedPositionsPanel(tk.Frame):
             self.tree.column(col, anchor="center", width=120)
 
         self.tree.pack(fill=tk.BOTH, expand=True)
+        self.tree.bind("<Double-1>", self._on_double_click)
 
-        self._sort_descending = {}  # track sort order per column
 
-    def update_table(self, df):
+        self._sort_descending = {}
+
+    def update_table(self, data):
+        rows = data if (isinstance(data, list) and data and isinstance(data[0], (list, tuple))) else [data]
         self.tree.delete(*self.tree.get_children())
-        for _, row in df.iterrows():
-            try:
-                pnl_str = str(row["PnL (%)"]).replace("%", "").strip()
-                pnl_value = float(pnl_str) if pnl_str else 0.0
-            except ValueError:
-                pnl_value = 0.0 
-            tag = "profit" if pnl_value >= 0 else "loss"
-
-            self.tree.insert("", "end", values=(
-                row["Buy_Timestamp"],
-                row["Sell_Timestamp"],
-                row["Token_Addres"],
-                f"{row['Entry_USD']:.6f}",
-                f"{row['Exit_USD']:.6f}",
-                f"{pnl_value:.2f}%",
-                row["Trigger"]
-            ), tags=(tag,))
-
         self.tree.tag_configure("profit", foreground="lightgreen")
         self.tree.tag_configure("loss", foreground="red")
 
+        for row in rows:
+            try:
+                entry_usd = float(row[3]) if row[3] is not None else 0.0
+            except (ValueError, TypeError):
+                entry_usd = 0.0
+
+            try:
+                exit_usd = float(row[4]) if row[4] is not None else 0.0
+            except (ValueError, TypeError):
+                exit_usd = 0.0
+
+            try:
+                pnl_value = float(row[5]) if row[5] is not None else 0.0
+            except (ValueError, TypeError):
+                pnl_value = 0.0
+
+            tag = "profit" if pnl_value >= 0 else "loss"
+
+            pnl_display = f"{pnl_value:.2f}%" if row[5] is not None else "—"
+
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    row[1] or "",         # buy_signature
+                    row[2] or "",         # sell_signature
+                    row[0] or "",         # id / token address
+                    f"{entry_usd:.6f}",
+                    f"{exit_usd:.6f}",
+                    pnl_display,
+                    row[6] or "",         # trigger_reason
+                ),
+                tags=(tag,)
+            )
 
     def sort_by(self, col, descending):
         """Sort tree contents when a column header is clicked."""
@@ -91,8 +112,19 @@ class ClosedPositionsPanel(tk.Frame):
 
     def refresh(self):
         try:
-            df = self.ctx.get("excel_utility").load_closed_positions(self.settings["SIM_MODE"])
+            df = self.ctx.get("token_dao").get_closed_poisitons()
             self.update_table(df)
         except Exception as e:
             print(f"⚠️ Failed to refresh closed positions: {e}")
+
+    def _on_double_click(self, event):
+        item_id = self.tree.identify_row(event.y)
+        if not item_id:
+            return
+
+        values = self.tree.item(item_id, "values")
+        headers = self.columns
+        token_address = values[2] if len(values) > 2 else None
+
+        UIPopupHelper.show_detail_popup("💹 Closed Trade Details", headers, values, token_address, master=self)
 

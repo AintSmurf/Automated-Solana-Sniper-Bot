@@ -360,14 +360,6 @@ class HeliusClient:
         try:
             # 1️⃣ Type check
             if not isinstance(response, dict):
-                self.logger.error(f"❌ {description}: Expected dict, got {type(response)}")
-
-                fail_data = self.ctx.get("excel_utility").build_failed_rpc_calls(
-                    description,
-                    "INVALID_TYPE",
-                    f"Expected dict, got {type(response)}"
-                )
-                self.ctx.get("excel_utility").save_failed_rpc(fail_data)
                 return None
             if "error" in response:
                 err = response["error"]
@@ -376,35 +368,14 @@ class HeliusClient:
                 data = err.get("data", "No data")
 
                 self.logger.error(f"❌ {description}: RPC error {code}: {msg} | data={data}")
-
-                fail_data = self.ctx.get("excel_utility").build_failed_rpc_calls(
-                    description,
-                    str(code),
-                    f"{msg} | data={data}"
-                )
-                self.ctx.get("excel_utility").save_failed_rpc(fail_data)
                 return None
             if "result" not in response:
                 self.logger.error(f"❌ {description}: Missing 'result' key. Full response: {response}")
-
-                fail_data = self.ctx.get("excel_utility").build_failed_rpc_calls(
-                    description,
-                    "NO_RESULT_KEY",
-                    str(response)
-                )
-                self.ctx.get("excel_utility").save_failed_rpc(fail_data)
                 return None
             return response["result"]
 
         except Exception as e:
             self.logger.error(f"❌ {description}: unexpected error: {e}", exc_info=True)
-
-            fail_data = self.ctx.get("excel_utility").build_failed_rpc_calls(
-                description,
-                "EXCEPTION",
-                str(e)
-            )
-            self.ctx.get("excel_utility").save_failed_rpc(fail_data)
             return None
 
     def get_enhanced_transactions_by_address(self,PDA:str):

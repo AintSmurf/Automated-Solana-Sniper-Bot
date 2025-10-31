@@ -2,6 +2,7 @@ import time
 from datetime import datetime, timezone
 import threading
 from services.bot_context import BotContext
+from helpers.framework_utils import get_formatted_date_str
 
 
 
@@ -63,8 +64,8 @@ class OpenPositionTracker:
             self.logger.error(f"❌ Failed DB sync: {e}", exc_info=True)
 
     def _evaluate_trades(self):
-        """Check current prices and exit triggers."""
         jup = self.ctx.get("jupiter_client")
+        hel = self.ctx.get("helius_client")
         exit_rules = self.settings.get("EXIT_RULES", {})
 
         with self.tokens_lock:
@@ -76,6 +77,9 @@ class OpenPositionTracker:
                 continue
 
             try:
+                data = hel.get_token_meta_data(token_mint)
+                token_image = data["image"]
+                token_name = data["name"]
                 entry_usd = float(trade["entry_usd"])
                 current_price_usd = jup.get_token_price(token_mint)
                 pnl = ((current_price_usd - entry_usd) / entry_usd) * 100
@@ -87,9 +91,10 @@ class OpenPositionTracker:
                     "entry_usd": entry_usd,
                     "current_price": current_price_usd,
                     "pnl": pnl,
+                    "token_image":token_image,
+                    "token_name":token_name
                 })
 
-                # Apply exit checks
                 for rule, func in self.exit_checks.items():
                     if exit_rules.get(rule, False):
                         result = func(token_mint, entry_usd, current_price_usd, trade)
@@ -106,9 +111,9 @@ class OpenPositionTracker:
         sig = self.trader.sell(token_mint, self.base_token, trigger_reason=trigger)
         trade_dao = self.ctx.get("trade_dao")
         sig_dao = self.ctx.get("signatures_dao")
-
+        self.tracker_logger.info({"event": "sell", "token_mint": token_mint})
         if not sig and self.settings.get("SIM_MODE", False):
-            sig = f"SIM-{int(time.time())}"
+            sig = f"SIMULATED_SELL_{get_formatted_date_str()}"
             sig_dao.update_sell_signature(trade["token_id"], sig)
             trade_dao.close_trade(
                 trade_id=trade["id"],
@@ -116,10 +121,64 @@ class OpenPositionTracker:
                 pnl_percent=pnl,
                 trigger_reason=trigger
             )
-            self.logger.info(f"🧪 Simulated sell closure for {token_mint} — PnL: {pnl:.2f}% | Exit USD: {current_price_usd:.2f}")
+            self.logger.info(f"🧪 Simulated sell closure for {token_mint} — PnL: {pnl:.2f}% | Exit USD: {current_price_usd:.8f}")
             with self.tokens_lock:
                 self.active_trades.pop(token_mint, None)
             return
+
+    def manual_close(self, token_mint: str):
+        try:
+            with self.tokens_lock:
+                trade = self.active_trades.get(token_mint)
+                if not trade:
+                    self.logger.warning(f"⚠️ Tried to manually close {token_mint}, but it's not active.")
+                    return False
+
+            entry_usd = float(trade.get("entry_usd", 0))
+            jup = self.ctx.get("jupiter_client")
+            hel = self.ctx.get("helius_client")
+
+            current_price_usd = jup.get_token_price(token_mint)
+            pnl = ((current_price_usd - entry_usd) / entry_usd) * 100
+
+            trigger = "MANUAL"
+            sig = self.trader.sell(token_mint, self.base_token, trigger_reason=trigger)
+
+            trade_dao = self.ctx.get("trade_dao")
+            sig_dao = self.ctx.get("signatures_dao")
+
+            if not sig and self.settings.get("SIM_MODE", False):
+                sig = f"SIMULATED_MANUAL_{get_formatted_date_str()}"
+                sig_dao.update_sell_signature(trade["token_id"], sig)
+                trade_dao.close_trade(
+                    trade_id=trade["id"],
+                    exit_usd=current_price_usd,
+                    pnl_percent=pnl,
+                    trigger_reason=trigger
+                )
+                self.logger.info(f"🧪 Manual simulated closure for {token_mint} — PnL: {pnl:.2f}% | Exit USD: {current_price_usd:.6f}")
+            else:
+                sig_dao.update_sell_signature(trade["token_id"], sig)
+                trade_dao.close_trade(
+                    trade_id=trade["id"],
+                    exit_usd=current_price_usd,
+                    pnl_percent=pnl,
+                    trigger_reason=trigger
+                )
+                self.logger.info(f"✅ Manual real closure for {token_mint} — TX: {sig}")
+
+            with self.tokens_lock:
+                self.active_trades.pop(token_mint, None)
+
+            self.tracker_logger.info({
+                "event": "sell",
+                "token_mint": token_mint,
+            })
+            return True
+
+        except Exception as e:
+            self.logger.error(f"❌ Manual close failed for {token_mint}: {e}", exc_info=True)
+            return False
 
     def has_open_positions(self):
         with self.tokens_lock:

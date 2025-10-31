@@ -40,3 +40,14 @@ class TokenDAO:
         sql = "SELECT id FROM tokens WHERE token_address = %s;"
         res = self.sql_helper.execute_select(sql, (token_address,))
         return res[0][0] if res else None
+    
+    def get_closed_poisitons(self):
+        sql='''
+        SELECT t.token_address,s.buy_signature ,s.sell_signature ,t2.entry_usd ,t2.exit_usd ,t2.pnl_percent ,t2.trigger_reason 
+        FROM tokens t
+        INNER JOIN signatures s ON t.id = s.token_id 
+        INNER join trades t2 on t.id = t2.token_id  
+        '''
+        res = self.sql_helper.execute_select(sql)
+        return res if res else None
+

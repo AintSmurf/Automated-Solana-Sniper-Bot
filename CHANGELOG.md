@@ -36,7 +36,7 @@ All notable changes to this project will be documented in this file.
   - Simulation sell exits handled in `OpenPositionTracker` (skips real transaction).
   - TraderManager no longer branches logic for sim vs real inside finalize flow.
 - **BotContext** extended:
-  - Provides `helius_client`, `jupiter_client`, and `excel_utility` for all services.
+  - Provides `helius_client`, `jupiter_client` for all services.
 - **Liquidity math**:
   - Internal calculations use lamports, decimals only for logging/exports.
 - **On-chain pricing**:

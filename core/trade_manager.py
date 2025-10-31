@@ -2,6 +2,7 @@ from services.bot_context import BotContext
 from helpers.framework_utils import run_bg, decimal_to_lamports
 from datetime import datetime, timezone
 from concurrent.futures import Future
+from helpers.framework_utils import get_formatted_date_str
 
 
 class TraderManager:
@@ -21,7 +22,6 @@ class TraderManager:
             quote = data["quote"]
             real_entry_price = usd_amount / token_received
 
-            # ✅ Simulated Mode (UTC timestamps)
             if sim:
                 return self._insert_simulated_trade(output_mint, real_entry_price, real_entry_price)
 
@@ -34,8 +34,7 @@ class TraderManager:
 
             self.logger.info(f"✅ Transaction submitted — signature: {buy_signature}")
 
-            # Background verification
-            payload = {"output_mint": output_mint, "usd_amount": usd_amount}
+            payload = {"output_mint": output_mint, "usd_amount": real_entry_price}
             fut = run_bg(self.ctx.get("helius_client").verify_signature, buy_signature)
             fut.add_done_callback(self._signature_status_callback(buy_signature, "buy", payload))
             self.pending_futures[output_mint] = fut
@@ -197,7 +196,7 @@ class TraderManager:
             confirmed_at=now_utc,
             finalized_at=now_utc,
         )
-        sig_dao.insert_signature(token_id, buy_signature="SIMULATED_BUY", sell_signature=None)
+        sig_dao.insert_signature(token_id, buy_signature=f"SIMULATED_BUY_{get_formatted_date_str()}", sell_signature=None)
 
         trade_row = trade_dao.get_trade_by_id(trade_id)
         tracker.active_trades[output_mint] = trade_row
