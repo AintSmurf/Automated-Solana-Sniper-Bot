@@ -61,10 +61,11 @@ Shows bot status, wallet balance, API usage, trade settings, and real-time close
 
 Configuration panel for setting TP, SL, TSL, timeout, and enabling/disabling exit rules.  
 
-# UI POPUP
+### UI POPUP
 ![UI Popup](assets/popup.png)
 
 Modern fixed-size popup displaying full trade details for any position.
+
 ---
 
 ## New in 3.2.0
