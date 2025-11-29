@@ -12,6 +12,7 @@ class TraderManager:
         self.logger = ctx.get("logger")
         self.tracker_logger = ctx.get("tracker_logger")
         self.pending_futures: dict[str, Future] = {}
+        self.live_channel = ctx.settings_manager.get_notification_settings()["DISCORD"]["LIVE_CHANNEL"]
 
     def buy(self, input_mint: str, output_mint: str, usd_amount: int, sim: bool) -> str:
         self.logger.info(f"🔄 Initiating BUY for ${usd_amount} — Token: {output_mint}")
@@ -161,9 +162,8 @@ class TraderManager:
             tracker.active_trades[output_mint] = trade_row
             self.logger.info(f"✅ Trade {output_mint} {status.upper()} + Signature saved + Tracker updated")
             notifier = self.ctx.get("notification_manager")
-            notifier.notify_text(
-                f"✅ **BUY FINALIZED** — `{output_mint}`\n💵 USD: {usd_amount:.8f}\n🔗 Signature: `{signature}`"
-            )
+            notifier.notify_text(f"✅ **BUY FINALIZED** — `{output_mint}`\n💵 USD: {usd_amount:.8f}\n🔗 Signature: `{signature}`",self.live_channel)
+            self.ctx.get("trade_counter").increment()
 
         except Exception as e:
             self.logger.error(f"❌ _on_buy_status error: {e}", exc_info=True)
@@ -198,12 +198,10 @@ class TraderManager:
             sig_dao.update_sell_signature(token_id, signature)
 
             self.logger.info(
-                f"💰 Trade closed for {token_mint} ({reason}) — PnL: {pnl_percent:.8f}% | Exit USD: {current_price_usd:.2f}"
+                f"💰 Trade closed for {token_mint} ({reason}) — PnL: {pnl_percent:.8f}% | Exit USD: {current_price_usd:.8f}"
             )
             notifier = self.ctx.get("notification_manager")
-            notifier.notify_text(
-                f"💰 **SELL EXECUTED** — `{token_mint}`\n📈 PnL: {pnl_percent:.8f}%\n💵 Exit USD: {current_price_usd:.2f}\n⚙️ Reason: {reason}"
-            )
+            notifier.notify_text(f"💰 **SELL EXECUTED** — `{token_mint}`\n📈 PnL: {pnl_percent:.8f}%\n💵 Exit USD: {current_price_usd:.8f}\n⚙️ Reason: {reason}",self.live_channel)
 
             if tracker and token_mint in tracker.active_trades:
                 tracker.active_trades.pop(token_mint, None)
@@ -235,6 +233,7 @@ class TraderManager:
 
         trade_row = trade_dao.get_trade_by_id(trade_id)
         tracker.active_trades[output_mint] = trade_row
+        self.ctx.get("trade_counter").increment()
 
         self.logger.debug(f"📡 Added {output_mint} (SIM) to tracker instantly.")
         self.logger.info(f"🧪 Simulated trade created for {output_mint} (trade_id={trade_id})")

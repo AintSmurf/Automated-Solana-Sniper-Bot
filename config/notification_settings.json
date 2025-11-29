@@ -1,0 +1,8 @@
+{
+  "DISCORD": {
+    "LIVE_CHANNEL":"live", 
+    "NEW_TOKENS_CHANNEL":"new-tokens"
+  },
+  "TELEGRAM": {},
+  "SLACK": {}
+}

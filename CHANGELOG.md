@@ -4,6 +4,62 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [3.4.1] – Buy Limit Semantics & Notification Channels
+
+### Added
+- **Configurable notification channels**
+  - New settings structure for multi-channel alerts:
+    ```json
+    {
+      "DISCORD": {
+        "LIVE_CHANNEL": "live",
+        "NEW_TOKENS_CHANNEL": "new-tokens"
+      },
+      "TELEGRAM": {},
+      "SLACK": {}
+    }
+    ```
+  - `NotificationManager` can now route messages using logical hints (e.g. `"live"`, `"new_tokens"`) instead of hard-coding Discord channel names.
+  - Ready for future Telegram / Slack integration using the same pattern.
+
+### Changed
+- **TradeCounter semantics (MAXIMUM_TRADES)**
+  - `TradeCounter.increment()` is now called only when a trade is **actually created and tracked**:
+    - **Real trades** — increment happens inside `TraderManager._on_buy_status()` *after*:
+      - Signature is confirmed/finalized,
+      - Token balance is visible in the wallet,
+      - Trade row is inserted into the DB,
+      - Trade is added into `OpenPositionTracker.active_trades`.
+    - **Simulated trades** — increment happens inside `_insert_simulated_trade()` right after inserting the SIM trade and caching it in `active_trades`.
+  - The buy path **no longer increments** immediately after calling `buy(...)` from the detection layer:
+    - This means failed quotes, RPC errors, or transactions that never confirm **do not consume** a trade slot.
+    - `MAXIMUM_TRADES` now reflects “how many trades were **successfully opened** (real or sim)” rather than “how many buy attempts were made.”
+  - Behavior note:
+    - Multiple buys can still be broadcast in parallel if they pass `reached_limit()` before any trade finalizes.
+    - In those edge cases, the bot may briefly have more than `MAXIMUM_TRADES` live positions, but all of them will still be tracked and eligible for exit (TP/SL/TSL/timeout).
+
+- **Open position detection alignment**
+  - `OpenPositionTracker.has_open_positions()` now cleanly reflects the full lifecycle:
+    - Considers in-flight buys via `TraderManager.has_pending_trades()` (background `verify_signature` futures).
+    - Considers in-memory `active_trades` with statuses: `FINALIZED`, `SELLING`, `SIMULATED`.
+    - Falls back to `TradeDAO.get_live_trades(SIM_MODE)` which returns the same status set from the DB.
+  - Ensures the orchestrator and shutdown logic respect:
+    - Pending signature verifications,
+    - Both real and simulated open trades,
+    - Recovered state on restart via the DB.
+
+### Fixed
+- **False consumption of trade slots on failed buys**
+  - Previously, the detection layer incremented `TradeCounter` immediately after calling `buy(...)`, even if:
+    - Jupiter quote failed,
+    - The transaction send failed,
+    - Signature verification never finalized,
+    - The token never appeared in the wallet.
+  - This caused `MAXIMUM_TRADES` to be hit early while fewer real trades existed in the DB.
+  - Now, only successfully finalized (or simulated) trades increment the counter, fixing under-trading caused by failed attempts.
+  
+---
+
 ## [3.4.0] – Trade Lifecycle Hardening & Analytics
 
 ### Added

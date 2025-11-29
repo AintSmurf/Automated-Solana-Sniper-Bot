@@ -76,6 +76,8 @@ DEFAULT_SETTINGS = {
 }
 
 SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "bot_settings.json")
+DISCORD_SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "notification_settings.json")
+
 
 class Settings:
 
@@ -271,5 +273,11 @@ class Settings:
     def is_first_run(self) -> bool:
         return not os.path.exists(SETTINGS_PATH)
 
-
-
+    def get_notification_settings(self):
+        if os.path.exists(DISCORD_SETTINGS_PATH):
+            try:
+                with open(DISCORD_SETTINGS_PATH, "r") as f:
+                    loaded = json.load(f)
+                return loaded
+            except Exception as e:
+                logger.error(f"failed to open discord settings errot:{e}")

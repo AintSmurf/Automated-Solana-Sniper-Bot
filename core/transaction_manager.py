@@ -18,6 +18,7 @@ class TransactionManager:
         self.min_liq = st["MIN_TOKEN_LIQUIDITY"]
         self.trade_amount = st["TRADE_AMOUNT"]
         self.sim_mode = st["SIM_MODE"]
+        self.new_tokens_channel = ctx.settings_manager.get_notification_settings()["DISCORD"]["NEW_TOKENS_CHANNEL"]
 
         self.flow_timer_by_token = {}
 
@@ -119,7 +120,6 @@ class TransactionManager:
             # BUY / SIM
             if not self.ctx.get("trade_counter").reached_limit():
                 self.ctx.get("solana_manager").buy("So11111111111111111111111111111111111111112", token_mint, self.trade_amount, self.sim_mode)
-                self.ctx.get("trade_counter").increment()
             else:
                 self.logger.critical("💥 MAXIMUM_TRADES reached — skipping trade.")
             
@@ -131,13 +131,12 @@ class TransactionManager:
             dur = self._pop_flow_duration(token_mint)
             msg = (
                 f"🟢 **New token detected**\n"
-                f"• token_name:{name}`\n"
-                f"• token_symbol: {image}`\n"
-                f"• token_address: {token_mint}`\n"
+                f"• token_name:`{name}`\n"
+                f"• token_address: `{token_mint}`\n"
                 f"• signature: `{signature}`\n"
-                f"• 🕒 Flow duration: {dur:,.2f}\n"
+                f"• Flow duration: {dur:,.2f}\n"
             )
-            self.ctx.get("notification_manager").notify_text(msg, "new-tokens")
+            self.ctx.get("notification_manager").notify_text(msg, self.new_tokens_channel)
 
             # delayed post-buy checks
             run_timer(

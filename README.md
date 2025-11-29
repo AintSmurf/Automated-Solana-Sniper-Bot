@@ -5,7 +5,7 @@
 
 ## Overview  
 
-**Automated Solana Sniper Bot (v3.4.0)** is a modular, database-backed system for real-time token detection (Helius), automated trading (Jupiter), and position management (with live tracking, exit rules, and UI dashboard).  
+**Automated Solana Sniper Bot (v3.4.1)** is a modular, database-backed system for real-time token detection (Helius), automated trading (Jupiter), and position management (with live tracking, exit rules, and UI dashboard).  
 
 The system has evolved from CSV-based simulation to full **SQL persistence**, enabling advanced analytics, smoother UI integration, and fault-tolerant trade recovery.
 
@@ -22,7 +22,7 @@ The system has evolved from CSV-based simulation to full **SQL persistence**, en
 ## Table of Contents  
 
 - [Screenshots](#screenshots)  
-- [New in 3.4.0](#new-in-340)
+- [New in 3.4.1](#new-in-341)
 - [Prerequisites](#prerequisites)  
 - [Features](#features)  
 - [Requirements](#requirements)  
@@ -73,39 +73,38 @@ Modern fixed-size popup displaying full trade details for any position.
 
 ---
 
-## New in 3.4.0
+## New in 3.4.1
 
-- **Trade lifecycle hardening**
-  - New `SELLING` status in the `trades` table:
-    - `TraderManager.sell()` marks a trade as `SELLING` before broadcasting the swap.
-    - Prevents the reconciliation logic from treating in-flight exits as LOST.
-  - `TradeDAO.get_live_trades()` returns only logically “open” trades:
-    - `FINALIZED`, `SELLING`, `SIMULATED` (excludes `RECOVERED` / `CLOSED`).
-  - `OpenPositionTracker.has_open_positions()`:
-    - Checks in-memory `active_trades` for those statuses.
-    - Falls back to `get_live_trades()` in the DB.
-    - Ignores `RECOVERED` / `CLOSED` rows when deciding if the bot can stop.
+- **MAXIMUM_TRADES semantics (finalized-only counting)**
+  - `TradeCounter` no longer increments on every buy attempt.
+  - Real trades:
+    - Increment happens inside `TraderManager._on_buy_status()` *after*:
+      - Signature is confirmed/finalized,
+      - The new token is visible in the wallet,
+      - The trade row is inserted into the DB and added to `OpenPositionTracker.active_trades`.
+  - Simulated trades:
+    - Increment happens inside `_insert_simulated_trade()` right after inserting the SIM trade and caching it in `active_trades`.
+  - This means:
+    - Failed quotes / RPC errors / non-finalized transactions **do not consume** a trade slot.
+    - `MAXIMUM_TRADES` effectively means “how many trades were successfully opened (real or sim)”.
+    - In very fast markets, multiple buys may still be in-flight at once; the bot may briefly exceed `MAXIMUM_TRADES` in terms of *open* positions, but all of them are tracked and subject to normal exit rules.
 
-- **Safer shutdown after MAXIMUM_TRADES**
-  - When `TradeCounter` reaches `MAXIMUM_TRADES`:
-    - WebSocket + fetcher stop accepting new trades.
-    - The bot **waits** until:
-      - There are no pending signature verifications (`TraderManager.pending_futures`),
-      - No `FINALIZED` / `SELLING` / `SIMULATED` trades remain in memory,
-      - No matching live trades remain in the DB.
-    - Only then the orchestrator performs full shutdown.
-  - Fixes the edge case where the last BUY was broadcast right before shutdown and ended up finalized after the bot already exited.
+- **Notification channels are now configurable**
+  - Discord channel names are no longer hard-coded.
+  - A simple JSON structure maps logical channels (live feed, new tokens) to actual Discord channel names:
+    ```json
+    {
+      "DISCORD": {
+        "LIVE_CHANNEL": "live",
+        "NEW_TOKENS_CHANNEL": "new-tokens"
+      },
+      "TELEGRAM": {},
+      "SLACK": {}
+    }
+    ```
+  - Internally, the bot uses logical hints like `"live"` / `"new_tokens"` and resolves them to the configured channel names.
+  - Makes it easy for users to switch Discord channels without touching the code and prepares the same pattern for Telegram / Slack in future versions.
 
-- **Reconciliation & dust-aware recovery**
-  - `_reconcile_wallet_with_db()` now:
-    - Uses `DUST_THRESHOLD_USD` + cached prices to ignore tiny “dust” balances.
-    - Skips tokens that are:
-      - Already in `active_trades`, or
-      - In `SELLING` status.
-    - Only:
-      - Creates `RECOVERED` trades when a non-dust token exists in the wallet but is missing in DB and not active.
-      - Marks as `LOST` when the token is gone from the wallet, not active, and not `SELLING`.
-  - Prevents false LOST/RECOVERED events during TP/SL or brief wallet/DB desyncs.
 
 
 ---
@@ -319,7 +318,7 @@ python main.py --ui --no-save
     # Amount (in USD) per trade (simulation or real)
     "TRADE_AMOUNT": 10,
 
-    # Max number of trades before the bot shuts down
+    # Max number of successfully opened trades (real or sim) before the bot shuts down
     "MAXIMUM_TRADES": 20,
 
     # True = simulation mode, False = real trading
@@ -387,6 +386,24 @@ python main.py --ui --no-save
             "name": "Jupiter_limits"
         }
     }
+}
+
+```
+
+### Notification Channel Mapping
+
+- In addition to enabling/disabling notifiers via `NOTIFY`, you can control which channels the bot uses (for Discord / Telegram / Slack) via a simple mapping object:
+  - `NEW_TOKENS_CHANNEL` – feed for new token detections (mint, signature, flow duration, safety info).
+  - `LIVE_CHANNEL` – feed for BUY / SELL events, PnL%, and exit reasons (TP / SL / TSL / timeout / manual).
+
+```json
+{
+  "DISCORD": {
+    "LIVE_CHANNEL": "live",
+    "NEW_TOKENS_CHANNEL": "new-tokens"
+  },
+  "TELEGRAM": {},
+  "SLACK": {}
 }
 
 ```
