@@ -74,10 +74,6 @@ class OpenPositionTracker:
         jup = self.ctx.get("jupiter_client")
         hel = self.ctx.get("helius_client")
         exit_rules = self.settings.get("EXIT_RULES", {})
-
-
-
-
         with self.tokens_lock:
             tokens = list(self.active_trades.keys())
 
@@ -118,79 +114,106 @@ class OpenPositionTracker:
 
             except Exception as e:
                 self.logger.warning(f"⚠️ Evaluation error for {token_mint}: {e}")
-
+    
     def _handle_exit(self, token_mint, trade, current_price_usd, pnl, trigger):
-        sig = self.trader.sell(token_mint, self.base_token, trigger_reason=trigger)
         trade_dao = self.ctx.get("trade_dao")
         sig_dao = self.ctx.get("signatures_dao")
-        self.tracker_logger.info({"event": "sell", "token_mint": token_mint})
-        if not sig and self.settings.get("SIM_MODE", False):
-            sig = f"SIMULATED_SELL_{get_formatted_date_str()}"
-            sig_dao.update_sell_signature(trade["token_id"], sig)
+        sim_mode = self.settings["SIM_MODE"]
+        if sim_mode:
+            sim_sig = f"SIMULATED_SELL_{get_formatted_date_str()}"
+            sig_dao.update_sell_signature(trade["token_id"], sim_sig)
             trade_dao.close_trade(
                 trade_id=trade["id"],
                 exit_usd=current_price_usd,
                 pnl_percent=pnl,
-                trigger_reason=trigger
+                trigger_reason=trigger,
             )
+
             self.notifier.notify_text(
-                f"⚡ **Exit Triggered** — `{token_mint}`\n"
+                f"⚡ **Exit Triggered (SIM)** — `{token_mint}`\n"
                 f"📈 Reason: {trigger}\n"
                 f"💵 Current USD: {current_price_usd:.6f}\n"
                 f"📊 PnL: {pnl:.2f}%"
             )
-            self.logger.info(f"🧪 Simulated sell closure for {token_mint} — PnL: {pnl:.2f}% | Exit USD: {current_price_usd:.8f}")
+            self.logger.info(
+                f"🧪 Simulated sell closure for {token_mint} — "
+                f"PnL: {pnl:.2f}% | Exit USD: {current_price_usd:.8f}"
+            )
+
             with self.tokens_lock:
                 self.active_trades.pop(token_mint, None)
             return
+        sig = self.trader.sell(token_mint, self.base_token, trigger_reason=trigger)
+        self.tracker_logger.info({"event": "sell", "token_mint": token_mint})
 
-    def manual_close(self, token_mint: str):
+        if not sig:
+            self.logger.warning(f"⚠️ Real SELL failed for {token_mint}, keeping trade open.")
+
+    def manual_close(self, token_mint: str) -> bool:
         try:
             with self.tokens_lock:
                 trade = self.active_trades.get(token_mint)
-                if not trade:
-                    self.logger.warning(f"⚠️ Tried to manually close {token_mint}, but it's not active.")
-                    return False
 
-            entry_usd = float(trade.get("entry_usd", 0))
+            if not trade:
+                self.logger.warning(f"⚠️ Tried to manually close {token_mint}, but it's not active.")
+                return False
+            entry_usd = float(trade.get("entry_usd", 0) or 0)
             jup = self.ctx.get("jupiter_client")
-            hel = self.ctx.get("helius_client")
 
             current_price_usd = jup.get_token_price(token_mint)
-            pnl = ((current_price_usd - entry_usd) / entry_usd) * 100
-
-            trigger = "MANUAL"
-            sig = self.trader.sell(token_mint, self.base_token, trigger_reason=trigger)
+            pnl = ((current_price_usd - entry_usd) / entry_usd) * 100 if entry_usd else 0.0
 
             trade_dao = self.ctx.get("trade_dao")
             sig_dao = self.ctx.get("signatures_dao")
+            sim_mode = self.settings["SIM_MODE"]
+            trigger = "MANUAL"
+            if sim_mode:
+                sim_sig = f"SIMULATED_MANUAL_{get_formatted_date_str()}"
+                try:
+                    sig_dao.update_sell_signature(trade["token_id"], sim_sig)
+                except Exception as e:
+                    self.logger.warning(
+                        f"⚠️ Failed to update simulated manual sell signature for {token_mint}: {e}"
+                    )
 
-            if not sig and self.settings.get("SIM_MODE", False):
-                sig = f"SIMULATED_MANUAL_{get_formatted_date_str()}"
-                sig_dao.update_sell_signature(trade["token_id"], sig)
                 trade_dao.close_trade(
                     trade_id=trade["id"],
                     exit_usd=current_price_usd,
                     pnl_percent=pnl,
-                    trigger_reason=trigger
+                    trigger_reason=trigger,
                 )
-                self.logger.info(f"🧪 Manual simulated closure for {token_mint} — PnL: {pnl:.2f}% | Exit USD: {current_price_usd:.6f}")
+                self.logger.info(
+                    f"🧪 Manual simulated closure for {token_mint} — "
+                    f"PnL: {pnl:.2f}% | Exit USD: {current_price_usd:.6f}"
+                )
             else:
+                sig = self.trader.sell(token_mint, self.base_token, trigger_reason=trigger)
+
+                if not sig:
+                    self.logger.warning(
+                        f"⚠️ Manual real SELL failed for {token_mint}, keeping trade open."
+                    )
+                    return False
+
                 sig_dao.update_sell_signature(trade["token_id"], sig)
                 trade_dao.close_trade(
                     trade_id=trade["id"],
                     exit_usd=current_price_usd,
                     pnl_percent=pnl,
-                    trigger_reason=trigger
+                    trigger_reason=trigger,
                 )
-                self.logger.info(f"✅ Manual real closure for {token_mint} — TX: {sig}")
-
+                self.logger.info(
+                    f"✅ Manual real closure for {token_mint} — TX: {sig} | "
+                    f"PnL: {pnl:.2f}% | Exit USD: {current_price_usd:.6f}"
+                )
             with self.tokens_lock:
                 self.active_trades.pop(token_mint, None)
 
             self.tracker_logger.info({
                 "event": "sell",
                 "token_mint": token_mint,
+                "trigger": trigger,
+                "simulated": sim_mode,
             })
             return True
 

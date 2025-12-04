@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [3.4.2] – Global SIM Exits & Manual Close Consistency
+
+### Changed
+- **Global SIM exit pipeline**
+  - `OpenPositionTracker._handle_exit()` now branches *only* on the global `SIM_MODE` flag:
+    - When `SIM_MODE = true`:
+      - Skips `TraderManager.sell()` entirely (no on-chain swaps in SIM mode).
+      - Writes a synthetic sell signature (`SIMULATED_SELL_<timestamp>`).
+      - Calls `TradeDAO.close_trade(...)` and removes the token from `active_trades`.
+      - Sends a clear “Exit Triggered (SIM)” notification with trigger reason, current USD and PnL%.
+    - When `SIM_MODE = false`:
+      - Calls `TraderManager.sell()` as before.
+      - Relies on `TraderManager._on_sell_status()` to finalize and close the trade in the DB.
+      - Logs a warning (but does not close the trade) if the SELL transaction fails.
+  - This makes SIM mode strictly DB-only and real mode strictly on-chain, with no mixed “sim trade but real sell” behavior.
+
+- **Manual close behavior aligned with SIM mode**
+  - `OpenPositionTracker.manual_close()` now mirrors the same global SIM semantics:
+    - In SIM mode:
+      - Does **not** call `TraderManager.sell()`.
+      - Writes `SIMULATED_MANUAL_<timestamp>` as the sell signature.
+      - Immediately closes the trade in the DB via `TradeDAO.close_trade(...)` and removes it from `active_trades`.
+    - In real mode:
+      - Performs a real sell via `TraderManager.sell()`.
+      - Only closes the trade if a valid transaction signature is returned.
+      - If the SELL fails (no signature), the trade is left open and the method returns `False`.
+
+### Fixed
+- **Residual inconsistencies between automatic vs manual exits in SIM mode**
+  - Previously, some code paths still attempted a real `sell()` even when `SIM_MODE = true`, relying on `if not sig and SIM_MODE` as a fallback.
+  - This could:
+    - Log confusing “SELL failed” warnings in pure simulation runs, and
+    - Make automatic and manual exits behave slightly differently.
+  - Now, both automatic exits (TP/SL/TSL/timeout) and `manual_close()`:
+    - Never touch the chain when `SIM_MODE = true`,
+    - Always close trades purely through the database, and
+    - Produce consistent SIM-specific logs and notifications.
+
+
 ## [3.4.1] – Buy Limit Semantics & Notification Channels
 
 ### Added

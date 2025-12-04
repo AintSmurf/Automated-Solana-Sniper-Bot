@@ -5,7 +5,7 @@
 
 ## Overview  
 
-**Automated Solana Sniper Bot (v3.4.1)** is a modular, database-backed system for real-time token detection (Helius), automated trading (Jupiter), and position management (with live tracking, exit rules, and UI dashboard).  
+**Automated Solana Sniper Bot (v3.4.2)** is a modular, database-backed system for real-time token detection (Helius), automated trading (Jupiter), and position management (with live tracking, exit rules, and UI dashboard).  
 
 The system has evolved from CSV-based simulation to full **SQL persistence**, enabling advanced analytics, smoother UI integration, and fault-tolerant trade recovery.
 
@@ -22,7 +22,7 @@ The system has evolved from CSV-based simulation to full **SQL persistence**, en
 ## Table of Contents  
 
 - [Screenshots](#screenshots)  
-- [New in 3.4.1](#new-in-341)
+- [New in 3.4.2](#new-in-342)
 - [Prerequisites](#prerequisites)  
 - [Features](#features)  
 - [Requirements](#requirements)  
@@ -73,7 +73,20 @@ Modern fixed-size popup displaying full trade details for any position.
 
 ---
 
-## New in 3.4.1
+## New in 3.4.2
+
+- **Global SIM_MODE exit behavior (no real sells in simulation)**
+  - When `SIM_MODE = true`, `OpenPositionTracker._handle_exit()`:
+    - Does **not** call `TraderManager.sell()` at all.
+    - Writes a synthetic signature (`SIMULATED_SELL_<timestamp>`).
+    - Closes the trade directly via `TradeDAO.close_trade(...)`.
+    - Removes the token from `active_trades` and sends a clear “Exit Triggered (SIM)” notification.
+  - This makes simulation runs fully DB-only: no on-chain swaps, but exits still respect TP / SL / TSL / timeout.
+
+- **Manual close aligned with SIM_MODE**
+  - `manual_close()` now mirrors the same logic:
+    - In SIM mode, it skips on-chain SELL, writes `SIMULATED_MANUAL_<timestamp>`, closes the trade in the DB, and pops it from `active_trades`.
+    - In real mode, it performs a real SELL via `TraderManager.sell()` and only closes the trade if a transaction signature is returned.
 
 - **MAXIMUM_TRADES semantics (finalized-only counting)**
   - `TradeCounter` no longer increments on every buy attempt.
@@ -104,7 +117,6 @@ Modern fixed-size popup displaying full trade details for any position.
     ```
   - Internally, the bot uses logical hints like `"live"` / `"new_tokens"` and resolves them to the configured channel names.
   - Makes it easy for users to switch Discord channels without touching the code and prepares the same pattern for Telegram / Slack in future versions.
-
 
 
 ---
