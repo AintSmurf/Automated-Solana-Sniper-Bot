@@ -4,34 +4,111 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [3.4.2] – Global SIM Exits & Manual Close Consistency
+## [3.4.2] – Global SIM Exits, Manual Close Consistency & Log Hygiene
+
+### Added
+
+#### Log maintenance & auto-analysis pipeline
+
+- **`config/logs_config.json`**
+  - New JSON config for log retention and optional daily analysis:
+    ```json
+    {
+      "AUTO_ANALYZE_TOKENS": true,
+      "AUTO_GZIP": true,
+      "AUTO_DELETE": false,
+      "RETENTION_DAYS": 2,
+      "INCLUDE_BACKUPS": true
+    }
+    ```
+  - Fields:
+    - `AUTO_ANALYZE_TOKENS` – if `true`, runs the DB-driven analyzer once per `maintain_logs` call (typically nightly) for **all trades from today**.
+    - `AUTO_GZIP` – if `true`, compresses old debug logs (`.log` → `.log.gz`).
+    - `AUTO_DELETE` – if `true`, deletes old debug logs instead of compressing.
+      - **Mutually exclusive** with `AUTO_GZIP`. If both are `true`, maintenance aborts with a clear error.
+    - `RETENTION_DAYS` – only logs with `mtime < today - RETENTION_DAYS` are touched.
+    - `INCLUDE_BACKUPS` – if `true`, also processes `logs/backups/debug/`.
+
+- **`bot_scripts/shrink_logs.py`**
+  - CLI tool to shrink rotated debug logs:
+    - Targets:
+      - `logs/debug/debug.log.*` (rotated, not the live `debug.log`)
+      - `logs/backups/debug/*debug.log*` (if `--include-backups`).
+    - Flags:
+      - `--before YYYY-MM-DD` – only process files last modified before this date.
+      - `--mode {gzip,delete}` – compress or delete matching logs.
+      - `--include-backups` – also process `logs/backups/debug/`.
+      - `--dry-run` – show what would be done without changing anything.
+    - Example:
+      ```bash
+      # Show what would be compressed / deleted (no changes)
+      python -m bot_scripts.shrink_logs --before 2025-12-05 --mode gzip --include-backups --dry-run
+      ```
+
+- **`bot_scripts/maintain_logs.py`**
+  - High-level maintenance entrypoint:
+    - Loads `config/logs_config.json`.
+    - Computes `cutoff_date = today - RETENTION_DAYS`.
+    - Invokes `shrink_logs.main()` with:
+      - `--before <cutoff_date>`
+      - `--mode gzip|delete`
+      - `--include-backups` (optional).
+    - If `AUTO_ANALYZE_TOKENS = true`, also runs:
+      ```bash
+      python -m bot_scripts.run_analyze --today
+      ```
+      which:
+      - Queries the DB via `TokenDAO.fetch_mint_signature(...)` for trades from **today** (all reasons).
+      - Calls `analyze.py` in parallel for each `(signature, token)` and writes compact, time-sorted logs to `logs/matched_logs/<mint>.log`.
+
+  - Typical usage (for cron/systemd):
+    ```bash
+    # Nightly maintenance: compress old logs + analyze today's tokens
+    python -m bot_scripts.maintain_logs
+    ```
 
 ### Changed
-- **Global SIM exit pipeline**
-  - `OpenPositionTracker._handle_exit()` now branches *only* on the global `SIM_MODE` flag:
-    - When `SIM_MODE = true`:
-      - Skips `TraderManager.sell()` entirely (no on-chain swaps in SIM mode).
-      - Writes a synthetic sell signature (`SIMULATED_SELL_<timestamp>`).
-      - Calls `TradeDAO.close_trade(...)` and removes the token from `active_trades`.
-      - Sends a clear “Exit Triggered (SIM)” notification with trigger reason, current USD and PnL%.
-    - When `SIM_MODE = false`:
-      - Calls `TraderManager.sell()` as before.
-      - Relies on `TraderManager._on_sell_status()` to finalize and close the trade in the DB.
-      - Logs a warning (but does not close the trade) if the SELL transaction fails.
-  - This makes SIM mode strictly DB-only and real mode strictly on-chain, with no mixed “sim trade but real sell” behavior.
 
-- **Manual close behavior aligned with SIM mode**
-  - `OpenPositionTracker.manual_close()` now mirrors the same global SIM semantics:
-    - In SIM mode:
-      - Does **not** call `TraderManager.sell()`.
-      - Writes `SIMULATED_MANUAL_<timestamp>` as the sell signature.
-      - Immediately closes the trade in the DB via `TradeDAO.close_trade(...)` and removes it from `active_trades`.
-    - In real mode:
-      - Performs a real sell via `TraderManager.sell()`.
-      - Only closes the trade if a valid transaction signature is returned.
-      - If the SELL fails (no signature), the trade is left open and the method returns `False`.
+#### Global SIM exit pipeline
+
+- **`OpenPositionTracker._handle_exit()`** now branches *only* on the global `SIM_MODE` flag:
+  - When `SIM_MODE = true`:
+    - Skips `TraderManager.sell()` entirely (no on-chain swaps in SIM mode).
+    - Writes a synthetic sell signature (`SIMULATED_SELL_<timestamp>`).
+    - Calls `TradeDAO.close_trade(...)` and removes the token from `active_trades`.
+    - Sends a clear “Exit Triggered (SIM)” notification with trigger reason, current USD and PnL%.
+  - When `SIM_MODE = false`:
+    - Calls `TraderManager.sell()` as before.
+    - Relies on `TraderManager._on_sell_status()` to finalize and close the trade in the DB.
+    - Logs a warning (but does not close the trade) if the SELL transaction fails.
+- This makes SIM mode strictly DB-only and real mode strictly on-chain, with no mixed “sim trade but real sell” behavior.
+
+#### Manual close semantics
+
+- **`OpenPositionTracker.manual_close()`** now mirrors the same global SIM semantics:
+  - In SIM mode:
+    - Does **not** call `TraderManager.sell()`.
+    - Writes `SIMULATED_MANUAL_<timestamp>` as the sell signature.
+    - Immediately closes the trade in the DB via `TradeDAO.close_trade(...)` and removes it from `active_trades`.
+  - In real mode:
+    - Performs a real sell via `TraderManager.sell()`.
+    - Only closes the trade if a valid transaction signature is returned.
+    - If the SELL fails (no signature), the trade is left open and the method returns `False`.
+
+#### Log analyzer robustness
+
+- **`bot_scripts/analyze.py`**
+  - Now transparently handles **compressed logs**:
+    - Uses `_open_maybe_gzip()` to read both `.log` and `.log.gz` files.
+    - Scans:
+      - `logs/debug/` (rotated + gzipped),
+      - `logs/backups/debug/` (if present),
+      - `logs/info.log`.
+  - Deduplication logic preserves the original line while collapsing whitespace-only differences.
+  - Still outputs small, per-token debug views (usually ~50–150 lines) to `logs/matched_logs/<token>.log`.
 
 ### Fixed
+
 - **Residual inconsistencies between automatic vs manual exits in SIM mode**
   - Previously, some code paths still attempted a real `sell()` even when `SIM_MODE = true`, relying on `if not sig and SIM_MODE` as a fallback.
   - This could:
@@ -41,6 +118,14 @@ All notable changes to this project will be documented in this file.
     - Never touch the chain when `SIM_MODE = true`,
     - Always close trades purely through the database, and
     - Produce consistent SIM-specific logs and notifications.
+
+- **Unbounded debug log growth**
+  - Large rotated debug files (2.5 GB per chunk) could accumulate indefinitely under `logs/debug/` and `logs/backups/debug/`.
+  - `shrink_logs.py` + `maintain_logs.py` now provide:
+    - Safe log compression (gzip) with measured space savings.
+    - Optional hard deletion for older chunks.
+    - Configurable retention behavior via `logs_config.json`.
+
 
 
 ## [3.4.1] – Buy Limit Semantics & Notification Channels

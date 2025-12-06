@@ -2,9 +2,10 @@ import os
 import argparse
 from datetime import datetime
 import re
+import gzip
 
 DEBUG_DIR = "logs/debug"
-BACKUP_DEBUG_DIR = "logs/backup/debug"
+BACKUP_DEBUG_DIR = "logs/backups/debug"
 INFO_LOG = "logs/info.log"
 OUTPUT_DIR = "logs/matched_logs"
 
@@ -14,21 +15,48 @@ def extract_datetime(line):
     try:
         timestamp_str = line.split(" - ")[0]
         return datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S,%f")
-    except:
+    except Exception:
         return datetime.min
+
+def _open_maybe_gzip(path):
+    # Handle already compressed logs, e.g. debug_...log.1.gz
+    if path.endswith(".gz"):
+        return gzip.open(path, "rt", encoding="utf-8", errors="ignore")
+    # Normal text log
+    return open(path, "r", encoding="utf-8", errors="ignore")
 
 def get_lines_from_dir(directory, keyword):
     matches = []
+
+    if not os.path.isdir(directory):
+        return matches
+
+    # Sort by mtime so older chunks come first
     for file in sorted(os.listdir(directory), key=lambda f: os.path.getmtime(os.path.join(directory, f))):
         path = os.path.join(directory, file)
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
+        if not os.path.isfile(path):
+            continue
+        try:
+            with _open_maybe_gzip(path) as f:
+                # Search for the keyword in each line
                 matches.extend([line.strip() for line in f if keyword in line])
+        except Exception as e:
+            # If a single file is corrupt or unreadable, don't kill the whole run
+            print(f"⚠️ Failed to read {path}: {e}")
+            continue
+
     return matches
 
 def get_lines_from_file(path, keyword):
-    with open(path, "r", encoding="utf-8") as f:
-        return [line.strip() for line in f if keyword in line]
+    if not os.path.exists(path):
+        return []
+
+    try:
+        with _open_maybe_gzip(path) as f:
+            return [line.strip() for line in f if keyword in line]
+    except Exception as e:
+        print(f"⚠️ Failed to read {path}: {e}")
+        return []
 
 def deduplicate_preserve_original(lines):
     normalized_map = {}

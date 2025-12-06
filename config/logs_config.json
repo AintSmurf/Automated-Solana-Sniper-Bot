@@ -1,0 +1,7 @@
+{
+  "AUTO_ANALYZE_TOKENS": true,   
+  "AUTO_GZIP": true,              
+  "AUTO_DELETE": false,           
+  "RETENTION_DAYS": -9999,            
+  "INCLUDE_BACKUPS": true         
+}

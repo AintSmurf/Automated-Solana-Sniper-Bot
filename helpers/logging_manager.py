@@ -57,7 +57,7 @@ class LoggingHandler:
 
             # 🛠️ DEBUG Log File Handler (Only stores DEBUG logs)
             debug_handler = RotatingFileHandler(
-                debug_file, maxBytes=2_500_000_000, backupCount=10, encoding="utf-8"
+                debug_file, maxBytes=50_000_000, backupCount=20, encoding="utf-8"
             )
             debug_handler.setLevel(logging.DEBUG)
             debug_handler.setFormatter(
@@ -69,7 +69,7 @@ class LoggingHandler:
 
             # 📢 Console Log File Handler
             console_handler = RotatingFileHandler(
-                console_log_file, maxBytes=50_000_000, backupCount=5, encoding="utf-8"
+                console_log_file, maxBytes=10_000_000, backupCount=3, encoding="utf-8"
             )
             console_handler.setLevel(logging.INFO)
             console_handler.setFormatter(
@@ -134,8 +134,8 @@ class LoggingHandler:
 
             file_handler = RotatingFileHandler(
                 special_debug_file,
-                maxBytes=100_000_000,
-                backupCount=3,
+                maxBytes=25_000_000,
+                backupCount=2,
                 encoding="utf-8",
             )
             file_handler.setLevel(logging.DEBUG)
@@ -179,23 +179,26 @@ class LoggingHandler:
                 LoggingHandler._backup_old_logs(
                     os.path.join("logs", "info.log"),
                     os.path.join("logs", "backups", "info"),
-                    prefix="info_"
+                    prefix="info_",
+                    keep_recent=5,
                 )
                 # 📦 Backup debug logs
                 LoggingHandler._backup_old_logs(
                     os.path.join("logs", "debug", "debug.log"),
                     os.path.join("logs", "backups", "debug"),
-                    prefix="debug_"
+                    prefix="debug_",
+                    keep_recent=5,
                 )
                 # 📦 Backup console logs
                 LoggingHandler._backup_old_logs(
                     os.path.join("logs", "console_logs", "console.info"),
                     os.path.join("logs", "backups", "console"),
-                    prefix="console_"
+                    prefix="console_",
+                    keep_recent=3,
                 )
             except Exception as e:
                 print(f"[LogBackupThread] Error during backup: {e}")
-            time.sleep(6000)  # 🔄 Repeat every 10 minutes
+            time.sleep(6000)  
 
     @staticmethod
     def _backup_old_logs(log_base_path: str, backup_dir: str, prefix: str = "", keep_recent: int = 5):
