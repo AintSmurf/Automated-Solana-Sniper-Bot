@@ -360,16 +360,44 @@ class OpenPositionTracker:
         return None
 
     def check_emergency_sl(self, token_mint, buy_usd, curr_usd, trade):
-        sl = self.settings.get("SL", 0.1)
+        sl_pct = self.settings.get("SL", 0.1)
+        early_pct = self.settings.get("EARLY_SL_PCT", 0.10)
+        early_seconds = self.settings.get("EARLY_SL_SECONDS", 30)
+
         peak = self.peak_price_dict.get(token_mint, buy_usd)
-        has_pumped = peak >= buy_usd * self.settings.get("MIN_TSL_TRIGGER_MULTIPLIER", 1.5)
-        if not has_pumped and curr_usd <= buy_usd * (1 - sl):
+        min_tsl_mult = self.settings.get("MIN_TSL_TRIGGER_MULTIPLIER", 1.3)
+        has_pumped = peak >= buy_usd * min_tsl_mult
+        if has_pumped:
+            return None
+        seconds_since = None
+        try:
+            buy_time = trade.get("timestamp")
+            if isinstance(buy_time, datetime):
+                if buy_time.tzinfo is None:
+                    buy_time = buy_time.replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
+                seconds_since = (now - buy_time).total_seconds()
+        except Exception as e:
+            self.logger.warning(f"⚠️ SL time calc failed for {token_mint}: {e}")
+        if not buy_usd:
+            return None
+        price_ratio = curr_usd / buy_usd
+        if (
+            seconds_since is not None
+            and seconds_since >= early_seconds
+            and price_ratio <= (1.0 - early_pct) 
+        ):
+            return {"trigger": "EARLY_STOP"}
+        if price_ratio <= (1.0 - sl_pct):         
             return {"trigger": "SL"}
+
         return None
 
     def check_timeout(self, token_mint, buy_usd, curr_usd, trade):
         timeout = self.settings.get("TIMEOUT_SECONDS", 300)
         threshold = self.settings.get("TIMEOUT_PROFIT_THRESHOLD", 1.2)
+        pnl_floor = self.settings.get("TIMEOUT_PNL_FLOOR", -0.03)  # e.g. -3%
+
         try:
             buy_time = trade.get("timestamp")
             if isinstance(buy_time, datetime):
@@ -380,8 +408,19 @@ class OpenPositionTracker:
             else:
                 seconds_since = 0
 
-            if seconds_since > timeout and curr_usd < buy_usd * threshold:
+            if not buy_usd:
+                return None
+            price_ratio = curr_usd / buy_usd
+            pnl_frac = price_ratio - 1.0
+            if (
+                seconds_since > timeout
+                and curr_usd < buy_usd * threshold
+                and pnl_frac >= pnl_floor
+            ):
                 return {"trigger": "TIMEOUT"}
+
         except Exception as e:
             self.logger.warning(f"⚠️ Timeout check failed for {token_mint}: {e}")
+
         return None
+
