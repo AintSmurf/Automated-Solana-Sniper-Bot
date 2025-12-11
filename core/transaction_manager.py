@@ -141,7 +141,7 @@ class TransactionManager:
             # delayed post-buy checks
             run_timer(
                 60.0,
-                self.ctx.get("solana_manager").second_phase_tests,
+                self._delayed_post_buy_handler,
                 token_mint,signature, market_cap,
                 name=f"postcheck-{token_mint[:6]}"
             )
@@ -199,5 +199,37 @@ class TransactionManager:
         except Exception as e:
             self.logger.error(f"❌ Prefetch extra txs failed for {token_mint}: {e}")
 
+    def _delayed_post_buy_handler(self, token_mint: str, signature: str, market_cap: float, attempt: int = 1):
+        try:
+            self.logger.info(f"⏳ Running delayed post-buy handler (attempt {attempt}) for {token_mint}...")
+            sol_mgr = self.ctx.get("solana_manager")
+            res = sol_mgr.second_phase_tests(token_mint, signature, market_cap) or {}
+            score = res.get("score", 0)
 
+            min_score = self.ctx.settings.get("MIN_POST_BUY_SCORE", 3)
+            self.logger.info(
+                f"🛡️ Post-buy score for {token_mint}: {score} (min required={min_score})"
+            )
+
+            if score >= min_score:
+                return
+            opt = self.ctx.get("open_position_tracker")
+            if not opt:
+                self.logger.warning("⚠️ open_position_tracker not registered in ctx, cannot BAD_SCORE-close.")
+                return
+
+            self.logger.info(
+                f"🛑 BAD_SCORE for {token_mint} (score={score} < {min_score}) — closing via OpenPositionTracker"
+            )
+            closed = opt.manual_close(token_mint, trigger="BAD_SCORE")
+            if not closed:
+                self.logger.warning(
+                    f"⚠️ BAD_SCORE manual_close failed or trade not active for {token_mint}"
+                )
+
+        except Exception as e:
+            self.logger.error(
+                f"❌ _delayed_post_buy_handler failed for {token_mint}: {e}",
+                exc_info=True
+            )
 

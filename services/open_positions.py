@@ -149,7 +149,7 @@ class OpenPositionTracker:
         if not sig:
             self.logger.warning(f"⚠️ Real SELL failed for {token_mint}, keeping trade open.")
 
-    def manual_close(self, token_mint: str) -> bool:
+    def manual_close(self, token_mint: str,trigger = "MANUAL") -> bool:
         try:
             with self.tokens_lock:
                 trade = self.active_trades.get(token_mint)
@@ -166,7 +166,6 @@ class OpenPositionTracker:
             trade_dao = self.ctx.get("trade_dao")
             sig_dao = self.ctx.get("signatures_dao")
             sim_mode = self.settings["SIM_MODE"]
-            trigger = "MANUAL"
             if sim_mode:
                 sim_sig = f"SIMULATED_MANUAL_{get_formatted_date_str()}"
                 try:

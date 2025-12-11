@@ -141,4 +141,3 @@ class ScamChecker:
         self.ctx.get("scam_checker_dao").insert_token_results(token_id,results["LP_Check"],results["Holders_Check"],results["Volume_Check"],results["MarketCap_Check"],score)
         self.ctx.get("token_dao").insert_token_stats(token_id,market_cap,amount_of_holders)
         return {"score": score, "results": results}
-    

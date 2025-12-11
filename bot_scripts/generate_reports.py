@@ -6,7 +6,7 @@ from helpers.credentials_utility import CredentialsUtility
 from config.settings import Settings
 from services.sql_db_utility import SqlDBUtility
 from helpers.framework_utils import get_local_tz_offset_str
-SINCE_TIMESTAMP = "2025-12-06 00:00:00"
+SINCE_TIMESTAMP = "2025-12-10 00:00:00"
 
 def main():
     # ── bootstrap context / db ─────────────────────────
