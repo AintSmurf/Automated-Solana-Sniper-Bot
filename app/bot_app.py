@@ -1,5 +1,4 @@
 from core_orchestrator.bot_orchestrator import BotOrchestrator
-from interface.sniper_bot_ui import SniperBotUI
 from services.bot_context import BotContext
 import argparse
 import sys
@@ -81,6 +80,7 @@ class BotApp:
             self.run_cli()
 
     def run_ui(self):
+        from interface.sniper_bot_ui import SniperBotUI
         app = SniperBotUI(self.ctx)
         app.mainloop()
 

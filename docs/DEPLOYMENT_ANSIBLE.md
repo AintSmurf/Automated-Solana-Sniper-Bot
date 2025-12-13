@@ -35,6 +35,7 @@ PYTHONUNBUFFERED=1
 ---
 
 2. docker compose -f docker-compose.stack.yml up -d --build
+
 ```env
 docker compose -f docker-compose.stack.yml up -d --build
 ---
@@ -47,6 +48,12 @@ docker compose -f docker-compose.stack.yml up -d --build
 
 ## Ansible Deployment (remote server)
 
+- ### The repo ships example config files:
+  - infra/ansible/inventory.example.ini
+  - infra/ansible/group_vars/sniper_lab.example.yml
+  - infra/ansible/env.example
+- Do not edit the *.example files directly. Copy them to files without the .example suffix and edit those.The real files (inventory.ini, sniper_lab.yml, .env) are usually in .gitignore so your secrets stay local.
+
 1. Inventory (inventory.ini)
 2. Sniper stack variables (sniper_lab.yml or the playbook vars)
 3. deploy_v2.sh on your local machine
@@ -55,8 +62,8 @@ docker compose -f docker-compose.stack.yml up -d --build
 - inventory.ini
 
 ```env
-[lab]
-sniper_lab SERVER_IP ansible_user=YOUR_SERVER_NAME
+[sniper_lab]
+sniper_vm ansible_host=SERVER_IP ansible_user=YOUR_SERVER_NAME
 ---
 
 - sniper_lab.yml

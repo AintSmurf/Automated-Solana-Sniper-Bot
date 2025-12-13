@@ -2,6 +2,8 @@
 - name: Deploy Solana sniper bot stack (Postgres + bot)
   hosts: sniper_lab
   become: true
+  vars_files:
+    - ../group_vars/sniper_lab.yml
 
   tasks:
     - name: Install base packages for Docker
@@ -39,7 +41,6 @@
         src: "{{ sniper_project_tar }}"
         dest: "{{ sniper_app_dir }}"
         remote_src: no
-        extra_opts: ["--strip-components=1"]
 
     - name: Copy docker-compose stack file into app_dir
       copy:
