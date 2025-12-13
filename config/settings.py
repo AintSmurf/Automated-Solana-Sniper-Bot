@@ -31,6 +31,12 @@ DEFAULT_SETTINGS = {
     # tokens under this USD value are eligible for dust cleanup
     "DUST_THRESHOLD_USD":1,
 
+    #
+    "EARLY_SL_SECONDS": 20,
+    "EARLY_SL_PCT": 0.07,           
+    "TIMEOUT_PNL_FLOOR": -0.03,
+    "MIN_POST_BUY_SCORE": 3,
+
     # Ultra-low latency Solana transaction submission optimized for high-frequency trading.
     "USE_SENDER": {
     "REGION":"global",

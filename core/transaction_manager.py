@@ -221,7 +221,7 @@ class TransactionManager:
             self.logger.info(
                 f"🛑 BAD_SCORE for {token_mint} (score={score} < {min_score}) — closing via OpenPositionTracker"
             )
-            closed = opt.manual_close(token_mint, trigger="BAD_SCORE")
+            closed = opt.manual_close(token_mint, trigger="POST_BUY_SCORE")
             if not closed:
                 self.logger.warning(
                     f"⚠️ BAD_SCORE manual_close failed or trade not active for {token_mint}"

@@ -47,7 +47,7 @@ class WalletClient:
     def confirm_transaction(self, signature: str)->str:
         """Confirm a transaction by its signature."""
         try:
-            self.client = Client(f"{self.ctx.get("helius_client")}{self.ctx.api_keys["helius"]}")
+            self.client = Client(f"{self.ctx.get('helius_client')}{self.ctx.api_keys['helius']}")
             return self.client.confirm_transaction(signature)
         except Exception as e:
             self.logger.error(f"❌ Error confirming transaction {signature}: {e}")
@@ -107,7 +107,7 @@ class WalletClient:
             raise RuntimeError("Wallet not initialized. Call set_private_key() or create_wallet() first.")
         return self.account
     
-    def clean_dust_tokens(self, dust_threshold_usd: float | None = None)->None:
+    def clean_dust_tokens(self, dust_threshold_usd: float | None = None)->list[str]:
         closed_tokens = []
         try:
             helius = self.ctx.get("helius_client")

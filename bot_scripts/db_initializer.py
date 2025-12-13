@@ -80,14 +80,13 @@ def create_tables():
 
                 # TOKEN STATS
                 cur.execute("""
-                CREATE TABLE IF NOT EXISTS token_stats (
-                    id SERIAL PRIMARY KEY,
-                    token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
-                    market_cap DOUBLE PRECISION,
-                    holders_count INT,
-                );
+                    CREATE TABLE IF NOT EXISTS token_stats (
+                        id SERIAL PRIMARY KEY,
+                        token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
+                        market_cap DOUBLE PRECISION,
+                        holders_count INT
+                    );
                 """)
-
                 # SAFETY RESULTS
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS safety_results (

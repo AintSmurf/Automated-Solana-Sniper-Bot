@@ -29,3 +29,7 @@ summary_results.xlsx
 solana_sniper_bot.egg-info
 build
 third_party_imports.py
+infra/ansible/inventory.ini
+infra/ansible/project.tar
+infra/group_vars/sniper_lab.yml
+bot_scripts/generate_reports.py

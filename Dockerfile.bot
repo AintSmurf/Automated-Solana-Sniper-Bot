@@ -1,19 +1,19 @@
 # Dockerfile.bot
 FROM python:3.10-slim
 
+# System deps for building Python packages (solana, cryptography, etc.)
 RUN apt update -y && \
     apt install -y gcc libssl-dev libffi-dev curl bash && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy only setup + source first
-COPY setup.py ./
+# Copy full project into the image
 COPY . .
 
-# Install your package (and its deps from install_requires)
-RUN pip install --upgrade pip && pip install .
+# Install your package (setup.py / install_requires)
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    pip install .
 
-RUN chmod +x Credentials.sh
-
-CMD ["bash", "-lc", "source ./Credentials.sh && python -u main.py --server"]
+# Default command (will usually be overridden by docker-compose)
+CMD ["bash", "-lc", "python -u main.py --server"]

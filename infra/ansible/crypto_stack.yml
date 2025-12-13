@@ -1,0 +1,61 @@
+---
+- name: Deploy Solana sniper bot stack (Postgres + bot)
+  hosts: sniper_lab
+  become: true
+
+  tasks:
+    - name: Install base packages for Docker
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+        update_cache: yes
+
+    - name: Install Docker engine and compose plugin
+      apt:
+        name:
+          - docker.io
+          - docker-compose-plugin
+        state: present
+
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Ensure application directory exists
+      file:
+        path: "{{ sniper_app_dir }}"
+        state: directory
+        owner: "{{ ansible_user | default('server') }}"
+        group: "{{ ansible_user | default('server') }}"
+        mode: "0755"
+
+    - name: Upload and extract project archive into app_dir
+      unarchive:
+        src: "{{ sniper_project_tar }}"
+        dest: "{{ sniper_app_dir }}"
+        remote_src: no
+        extra_opts: ["--strip-components=1"]
+
+    - name: Copy docker-compose stack file into app_dir
+      copy:
+        src: "{{ sniper_docker_compose_src }}"
+        dest: "{{ sniper_app_dir }}/{{ sniper_docker_compose_dest }}"
+        owner: "{{ ansible_user | default('server') }}"
+        group: "{{ ansible_user | default('server') }}"
+        mode: "0644"
+
+    - name: Copy env file template into app_dir (do not overwrite existing .env)
+      copy:
+        src: "{{ sniper_env_template }}"
+        dest: "{{ sniper_app_dir }}/{{ sniper_env_file }}"
+        force: no
+
+    - name: Build and start the stack (Postgres + bot)
+      command: docker compose up -d --build
+      args:
+        chdir: "{{ sniper_app_dir }}"

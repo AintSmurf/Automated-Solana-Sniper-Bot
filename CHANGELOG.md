@@ -3,6 +3,125 @@
 All notable changes to this project will be documented in this file.  
 
 ---
+## [3.4.3] – Ansible Deploy Stack, Early Exit Tuning & Post-Buy Integration
+
+### Added
+
+#### Simple Docker / Ansible deployment story
+
+- **Docker env template**
+  - Standard `.env` layout for the stack:
+    - Solana / Helius / Discord / BirdEye keys.
+    - DB connection pointing at the stack Postgres service (`DB_HOST=db`).
+  - Used both for:
+    - Local `docker compose` runs.
+    - Remote stack deployment via Ansible.
+
+- **Ansible deployment wiring (remote server)**
+  - `infra/ansible/inventory.ini` (plus `inventory.ini.example`):
+    - Declares the target host group (e.g. `[lab]`) and SSH user.
+  - `infra/ansible/sniper_lab.yml` (plus `sniper_lab.example.yml`):
+    - Central place for stack variables:
+      - `sniper_app_dir` – where the project lives on the remote (e.g. `/home/REMOTE_USER/sniper_stack`).
+      - `sniper_project_tar` – archive name (e.g. `project.tar`).
+      - `sniper_docker_compose_src` / `sniper_docker_compose_dest`.
+      - `sniper_env_template` (`env.example`) and `sniper_env_file` (`.env`).
+      - `sniper_compose_project_name` – compose project name.
+  - `deploy_v2.sh`:
+    - Local helper script that:
+      - Activates your Ansible venv (`$HOME/ansible-venv` by default).
+      - Builds `infra/ansible/project.tar` from the current Git `HEAD`.
+      - Runs the `crypto_stack.yml` playbook with `--ask-pass --ask-become-pass`.
+    - Usage:
+      - `chmod +x deploy_v2.sh` (once)
+      - `./deploy_v2.sh` to deploy/update the stack on the server.
+
+#### New risk-tuning settings
+
+Added the following keys to `config/bot_settings.json`:
+
+```json
+{
+  "EARLY_SL_SECONDS": 20,
+  "EARLY_SL_PCT": 0.07,
+  "TIMEOUT_PNL_FLOOR": -0.03,
+  "MIN_POST_BUY_SCORE": 3
+}
+```
+- **`EARLY_SL_SECONDS`** – how long (in seconds) after entry we treat the trade as “fresh” for early SL logic.
+
+- **`EARLY_SL_PCT`** – tighter early stop loss (e.g. 0.07 = -7%) used before the trade has properly pumped.
+
+- **`TIMEOUT_PNL_FLOOR`** – minimum PnL (in fraction form, e.g. -0.03 = -3%) where the timeout rule is allowed to fire. Deeper losses are left to normal SL/TSL.
+
+- **`MIN_POST_BUY_SCORE`** – minimum allowed safety score from the post-buy pipeline (LP, holders, volume, marketcap) for a trade to be considered acceptable going forward.
+
+## Post-buy safety pipeline hookup
+
+  - The post-buy safety flow is now wired directly into the buy process:
+
+  - After a BUY is created and tracked, the token is queued into the post-buy analyzer.
+
+  - The analyzer computes a safety score and writes it into safety_results.
+
+  - MIN_POST_BUY_SCORE is used to flag weak tokens so downstream logic can treat them as high-risk (e.g. no “special protection” during recovery or follow-up).
+
+### Changed
+## OpenPositionTracker – early SL & timeout logic
+
+  - **`Early SL (check_emergency_sl)`**  now uses the new settings:
+
+    - Reads `EARLY_SL_PCT` and `EARLY_SL_SECONDS` directly from bot_settings.
+
+    - Uses the trade’s timestamp (normalized to UTC) to compute seconds_since entry.
+
+    - Keeps a per-token peak_price_dict and compares against MIN_TSL_TRIGGER_MULTIPLIER:
+
+      - If the token has already pumped above buy_usd * MIN_TSL_TRIGGER_MULTIPLIER, early SL is skipped so TSL can manage the move.
+
+  - **`Behavior`**:
+
+    - Compute price_ratio = curr_usd / buy_usd.
+
+    - If: we are past `EARLY_SL_SECONDS`, and price_ratio <= (1 - `EARLY_SL_PCT`),then it triggers {"trigger": "EARLY_STOP"}.
+
+    - Otherwise, if price_ratio <= (1 - `SL`) it falls back to the normal SL trigger.
+
+  - **`Timeout rule`** (check_timeout) now respects a PnL floor:
+
+    - Still uses:
+
+      - TIMEOUT_SECONDS for elapsed time since buy, and
+
+      - TIMEOUT_PROFIT_THRESHOLD as the “not good enough” profit cap.
+
+    - **`New behavior`**:
+
+      - Computes pnl_frac = (curr_usd / buy_usd) - 1.0.
+
+      - Timeout only triggers when:
+
+        - seconds_since > `TIMEOUT_SECONDS`,
+
+        - curr_usd < buy_usd * `TIMEOUT_PROFIT_THRESHOLD`, and
+
+        - pnl_frac >= `TIMEOUT_PNL_FLOOR`.
+
+    - If the position is already below the floor (too deep in loss), it will not be tagged as a timeout; SL/TSL rules are expected to handle it instead.
+
+## Cleaner SIM vs REAL exits (kept from 3.4.2 but aligned with new rules)
+
+    - `Exit decisions` (TP / SL / EARLY_STOP / TSL / TIMEOUT) now flow into the same _handle_exit() path,which: 
+      - Performs DB-only closes in SIM mode (synthetic sell signature, close_trade, removal from active_trades).
+      - Calls `TraderManager.sell()` only in real mode and leaves the trade open if the SELL fails.
+
+### Fixed
+  - **`Misclassification of early rugs vs normal SL / timeouts`**
+    - Some sharp early dumps could previously end up reported as generic SL or timeout exits.
+    - With EARLY_SL_PCT, EARLY_SL_SECONDS, and TIMEOUT_PNL_FLOOR wired into OpenPositionTracker, early rugs vs late SL vs timeout are now clearly separated in logs and PnL stats.
+  - **`Post-buy safety`** being only partially used
+    - The post-buy analyzer is now an explicit step in the buy pipeline, ensuring every opened trade gets a safety score rather than only a subset passing through the flow.
+
 
 ## [3.4.2] – Global SIM Exits, Manual Close Consistency & Log Hygiene
 

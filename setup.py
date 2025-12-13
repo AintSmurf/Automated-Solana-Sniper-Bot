@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="solana-sniper-bot",
-    version="3.4.1",
+    version="3.4.3",
     packages=find_packages(exclude=("tests", "docs")),
     python_requires=">=3.10",
     install_requires=[

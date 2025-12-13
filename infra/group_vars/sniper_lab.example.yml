@@ -1,0 +1,15 @@
+# Where the project will live on the remote server
+sniper_app_dir: /home/REMOTE_USER/sniper_stack
+
+# How we ship the code
+sniper_project_tar: project.tar
+
+# Docker compose file names
+sniper_docker_compose_src: docker-compose.stack.yml
+sniper_docker_compose_dest: docker-compose.yml
+
+# Env file handling
+sniper_env_template: env.example   
+sniper_env_file: .env            
+
+sniper_compose_project_name: sniper_stack
