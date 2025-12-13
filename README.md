@@ -163,7 +163,7 @@ For full configuration, deployment, and analysis details, see:
 - [Architecture & Internals](docs/ARCHITECTURE.md)
 - [Config Files Overview](docs/CONFIGURATION.md)
 - [Logs & Analysis](docs/LOGS_AND_ANALYSIS.md)
-- [Deployment (Docker + Ansible)](docs/DEPLOYMENT_ANSIBLE_DOCKER.md)
+- [Deployment (Docker + Ansible)](docs/DEPLOYMENT_ANSIBLE.md)
 - [roadmap](docs/ROADMAP.md)
 - [Changelog](CHANGELOG.md)
 
