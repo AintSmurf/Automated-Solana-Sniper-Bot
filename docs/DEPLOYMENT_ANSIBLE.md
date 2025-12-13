@@ -33,11 +33,12 @@ DB_PASSWORD=super_secret_password
 
 PYTHONUNBUFFERED=1
 ---
-
+```
 2. docker compose -f docker-compose.stack.yml up -d --build
 
 ```env
 docker compose -f docker-compose.stack.yml up -d --build
+```
 ---
 ## Important Notes
 
@@ -84,7 +85,7 @@ sniper_env_file: .env              # actual runtime env on server
 
 # Docker compose project name
 sniper_compose_project_name: sniper_stack
-
+```
 ---
 
 - deploy_v2.sh
@@ -110,7 +111,7 @@ ansible-playbook \
   -i "$INVENTORY_FILE" \
   "$PLAYBOOK_FILE" \
   --ask-pass --ask-become-pass
-
+```
 ---
 
 -usage
