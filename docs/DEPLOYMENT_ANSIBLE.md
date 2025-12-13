@@ -65,6 +65,7 @@ docker compose -f docker-compose.stack.yml up -d --build
 ```env
 [sniper_lab]
 sniper_vm ansible_host=SERVER_IP ansible_user=YOUR_SERVER_NAME
+```
 ---
 
 - sniper_lab.yml
