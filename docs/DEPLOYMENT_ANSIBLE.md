@@ -113,10 +113,8 @@ ansible-playbook \
   "$PLAYBOOK_FILE" \
   --ask-pass --ask-become-pass
 ```
----
-
 -usage
-    - chmod +x deploy_v2.sh # once
-    - ./deploy_v2.sh # deploy/update stack on the server
+- chmod +x deploy_v2.sh # once
+- ./deploy_v2.sh # deploy/update stack on the server
 
 
