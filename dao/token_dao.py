@@ -3,6 +3,8 @@ from services.bot_context import BotContext
 from helpers.framework_utils import get_formatted_date_str
 from typing import Optional
 from datetime import datetime
+from typing import Iterable, Optional, Literal
+
 
 
 class TokenDAO:
@@ -355,3 +357,190 @@ class TokenDAO:
         """
 
         return self.sql_helper.execute_select(sql, tuple(params)) or None
+
+    def list_trigger_reasons(self, since_ts: str | None = None):
+        sql = """
+        SELECT DISTINCT tr.trigger_reason
+        FROM trades tr
+        WHERE tr.trigger_reason IS NOT NULL
+        """
+        params = []
+        if since_ts:
+            sql += ' AND tr."timestamp" >= %s'
+            params.append(since_ts)
+
+        sql += " ORDER BY tr.trigger_reason;"
+
+        rows = self.sql_helper.execute_select(sql, tuple(params)) or []
+        return [r[0] for r in rows]
+
+    def fetch_trades_with_features(
+        self,
+        since_ts: Optional[str] = None,
+        until_ts: Optional[str] = None,
+        pnl_lte: Optional[float] = None,  
+        pnl_gte: Optional[float] = None,
+        trigger_reasons: Optional[Iterable[str]] = None, 
+        trigger_ilike: Optional[str] = None,          
+        status: Optional[str] = None,
+        simulation: Optional[bool] = None,
+        safety_score_lte: Optional[float] = None,
+        safety_score_gte: Optional[float] = None,
+        total_liq_lte: Optional[float] = None,
+        total_liq_gte: Optional[float] = None,
+        net_flow_lte: Optional[float] = None,
+        net_flow_gte: Optional[float] = None,
+        delta_volume_lte: Optional[float] = None,
+        delta_volume_gte: Optional[float] = None,
+
+        mode: Literal["detail", "summary_by_reason", "summary_by_liq_bucket"] = "detail",
+        limit: Optional[int] = None,
+    ):
+        params: list = []
+        where = ["1=1"]
+        if since_ts:
+            where.append('tr."timestamp" >= %s')
+            params.append(since_ts)
+        if until_ts:
+            where.append('tr."timestamp" < %s')
+            params.append(until_ts)
+
+        if pnl_lte is not None:
+            where.append("tr.pnl_percent <= %s")
+            params.append(pnl_lte)
+        if pnl_gte is not None:
+            where.append("tr.pnl_percent >= %s")
+            params.append(pnl_gte)
+
+        if status:
+            where.append("tr.status = %s")
+            params.append(status)
+
+        if simulation is not None:
+            where.append("tr.simulation = %s")
+            params.append(simulation)
+
+        if trigger_ilike:
+            where.append("tr.trigger_reason ILIKE %s")
+            params.append(trigger_ilike)
+
+        if trigger_reasons:
+            where.append("tr.trigger_reason = ANY(%s)")
+            params.append(list(trigger_reasons))
+        base_sql = f"""
+        WITH base AS (
+            SELECT tr.*
+            FROM trades tr
+            WHERE {" AND ".join(where)}
+        ),
+        feats AS (
+            SELECT
+                tr.id          AS trade_id,
+                tr.token_id,
+                tr."timestamp" AS trade_ts,
+                tr.trade_type,
+                tr.entry_usd,
+                tr.exit_usd,
+                tr.pnl_percent,
+                tr.trigger_reason,
+                tr.status,
+                tr.simulation,
+
+                ts.market_cap,
+                ts.holders_count,
+
+                liq.total_liq,
+                liq.sol_liq,
+                liq.usdc_liq,
+                liq.usdt_liq,
+                liq.usd1_liq,
+
+                vol.net_flow,
+                vol.delta_volume,
+                vol.buy_usd,
+                vol.sell_usd,
+                vol.total_usd,
+                vol.buy_count,
+                vol.sell_count,
+                vol.buy_ratio,
+
+                sr.score AS safety_score
+
+        FROM base tr
+        LEFT JOIN token_stats ts           ON ts.token_id  = tr.token_id
+        LEFT JOIN liquidity_snapshots liq  ON liq.token_id = tr.token_id
+        LEFT JOIN token_volumes vol        ON vol.token_id = tr.token_id
+        LEFT JOIN safety_results sr        ON sr.token_id  = tr.token_id
+        )
+
+        """
+        feat_where = ["1=1"]
+        feat_params: list = []
+
+        def add_feat(cond: str, val):
+            feat_where.append(cond)
+            feat_params.append(val)
+
+        if safety_score_lte is not None: add_feat("safety_score <= %s", safety_score_lte)
+        if safety_score_gte is not None: add_feat("safety_score >= %s", safety_score_gte)
+
+        if total_liq_lte is not None: add_feat("total_liq <= %s", total_liq_lte)
+        if total_liq_gte is not None: add_feat("total_liq >= %s", total_liq_gte)
+
+        if net_flow_lte is not None: add_feat("net_flow <= %s", net_flow_lte)
+        if net_flow_gte is not None: add_feat("net_flow >= %s", net_flow_gte)
+
+        if delta_volume_lte is not None: add_feat("delta_volume <= %s", delta_volume_lte)
+        if delta_volume_gte is not None: add_feat("delta_volume >= %s", delta_volume_gte)
+
+        # ---- outputs ----
+        if mode == "detail":
+            sql = base_sql + f"""
+            SELECT *
+            FROM feats
+            WHERE {" AND ".join(feat_where)}
+            ORDER BY trade_ts DESC
+            """
+            if limit is not None:
+                sql += " LIMIT %s"
+                feat_params.append(limit)
+
+        elif mode == "summary_by_reason":
+            sql = base_sql + f"""
+            SELECT
+              COALESCE(trigger_reason, 'unknown') AS trigger_reason,
+              COUNT(*) AS trade_count,
+              AVG(pnl_percent) AS avg_pnl_percent,
+              SUM(exit_usd - entry_usd) AS total_profit_usd,
+              AVG(exit_usd - entry_usd) AS avg_profit_usd
+            FROM feats
+            WHERE {" AND ".join(feat_where)}
+            GROUP BY 1
+            ORDER BY trade_count DESC;
+            """
+
+        elif mode == "summary_by_liq_bucket":
+            sql = base_sql + f"""
+            SELECT
+              CASE
+                WHEN total_liq IS NULL      THEN 'unknown'
+                WHEN total_liq <  5000      THEN '<5k'
+                WHEN total_liq < 10000      THEN '5k-10k'
+                WHEN total_liq < 25000      THEN '10k-25k'
+                WHEN total_liq < 50000      THEN '25k-50k'
+                ELSE '50k+'
+              END AS liq_bucket,
+              COUNT(*) AS trade_count,
+              AVG(pnl_percent) AS avg_pnl_percent,
+              SUM(exit_usd - entry_usd) AS total_profit_usd,
+              AVG(exit_usd - entry_usd) AS avg_profit_usd
+            FROM feats
+            WHERE {" AND ".join(feat_where)}
+            GROUP BY 1
+            ORDER BY 1;
+            """
+        else:
+            raise ValueError("bad mode")
+
+        all_params = tuple(params + feat_params)
+        return self.sql_helper.execute_select(sql, all_params) or None

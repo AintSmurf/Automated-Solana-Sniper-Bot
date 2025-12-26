@@ -5,70 +5,63 @@ class ScamChecker:
         self.ctx = ctx
         self.logger = ctx.get("logger")
     
-    def is_token_scam(self, response_json:dict, token_mint:str) -> bool:
-        if "routePlan" not in response_json or not response_json["routePlan"]:
-            self.logger.warning(f"🚨 No swap route for {token_mint}. Possible honeypot.")
+    def is_token_scam(self, response_json: dict, token_mint: str) -> bool:
+        route_plan = response_json.get("routePlan") or []
+        if not route_plan:
+            self.logger.warning(f"🚨 No swap route for {token_mint}. Possible honeypot/illiquid.")
             return True
 
-        best_route = response_json["routePlan"][0]["swapInfo"]
-        in_amount = float(best_route["inAmount"])
-        out_amount = float(best_route["outAmount"])
-        fee_amount = float(best_route["feeAmount"])
+        swap_info = (route_plan[0] or {}).get("swapInfo") or {}
 
-        fee_ratio = fee_amount / in_amount if in_amount > 0 else 0
-        if fee_ratio > 0.05:
-            self.logger.warning(
-                f"⚠️ High tax detected ({fee_ratio * 100}%). Possible scam token."
-            )
+        try:
+            in_amount = float(swap_info["inAmount"])
+            out_amount = float(swap_info["outAmount"])
+        except Exception:
+            self.logger.warning(f"🚨 Missing inAmount/outAmount for {token_mint}.")
             return True
-
-        self.logger.info("token scam test - tax check passed")
 
         if out_amount == 0:
-            self.logger.warning(
-                f"🚨 Token has zero output in swap! No liquidity detected for {token_mint}."
-            )
+            self.logger.warning(f"🚨 Zero output for {token_mint}. No liquidity.")
             return True
 
-        self.logger.info("token scam test - output check passed")
-
+        # keep as a rough sanity check
         if in_amount / out_amount > 10000:
-            self.logger.warning(
-                f"⚠️ Unreasonable token price ratio for {token_mint}. Possible rug."
-            )
+            self.logger.warning(f"⚠️ Unreasonable price ratio for {token_mint}.")
             return True
 
-        self.logger.info("token scam test - price ratio check passed")
-        self.logger.info(f"✅ Token {token_mint} passed Jupiter scam detection.")
-        return False    
-    
+        self.logger.info(f"✅ Token {token_mint} passed quote sanity checks.")
+        return False
+  
     def first_phase_tests(self, token_mint: str) -> bool:
-        token_amount = self.ctx.get("jupiter_client").get_solana_token_worth_in_dollars(15)
+        token_amount = self.ctx.get("jupiter_client").get_solana_token_worth_in_dollars(
+            self.ctx.settings["TRADE_AMOUNT"]
+        )
         quote = self.ctx.get("jupiter_client").get_quote_dict(
-            token_mint, "So11111111111111111111111111111111111111112", token_amount
+            token_mint,
+            "So11111111111111111111111111111111111111112",  # WSOL
+            token_amount,
         )
 
         if not quote.get("quote") or not quote.get("quote_price"):
             return False
 
-        if self.is_token_scam(quote.get("quote"), token_mint):
+        if self.is_token_scam(quote["quote"], token_mint):
             return False
-
         try:
-            mint_info = self.ctx.get("helius_client").get_mint_account_info(token_mint)
-
-            if not mint_info.get("authorities") or mint_info["authorities"][0].get("address") != "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM":
+            mint_info = self.ctx.get("helius_client").get_mint_account_info(token_mint) or {}
+            token_info = mint_info.get("token_info") or {}
+            mint_authority = token_info.get("mint_authority")
+            freeze_authority = token_info.get("freeze_authority")
+            if mint_authority is not None:
                 self.logger.warning(
-                    f"🚨 Token {token_mint} still has FULL authority! Devs can mint or change supply. HIGH RISK."
+                    f"🚨 Token {token_mint} mint authority still exists ({mint_authority}). HIGH RISK."
                 )
                 return False
-
-            if mint_info.get("frozen", False):
+            if freeze_authority is not None:
                 self.logger.warning(
-                    f"🚨 Token {token_mint} has freeze authority! Devs can freeze wallets. HIGH RISK."
+                    f"🚨 Token {token_mint} freeze authority still exists ({freeze_authority}). HIGH RISK."
                 )
                 return False
-
             if mint_info.get("mutable", False):
                 if self.ctx.get("rug_check").is_liquidity_unlocked(token_mint):
                     self.logger.warning(
@@ -86,7 +79,7 @@ class ScamChecker:
         except Exception as e:
             self.logger.error(f"❌ Error checking scam tests for {token_mint}: {e}", exc_info=True)
             return False
-    
+ 
     def second_phase_tests(self, token_mint:str,signature:str,market_cap:float, attempt:int=1):
         self.logger.info(f"⏳ Running DELAYED post-buy check (attempt {attempt}) for {token_mint}...")
 

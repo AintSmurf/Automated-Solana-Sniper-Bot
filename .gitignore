@@ -34,3 +34,5 @@ infra/ansible/project.tar
 infra/group_vars/sniper_lab.yml
 infra/ansible/.env
 bot_scripts/generate_reports.py
+trigger_analysis.xlsx
+summary_results_2.xlsx

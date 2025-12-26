@@ -5,6 +5,8 @@ from helpers.credentials_utility import CredentialsUtility
 from config.settings import Settings
 from services.sql_db_utility import SqlDBUtility
 from helpers.framework_utils import get_local_tz_offset_str
+
+
 def main():
     credentials = CredentialsUtility()
     credentials_dictionary = credentials.get_all()
@@ -22,6 +24,7 @@ def main():
     tz_offset_str = get_local_tz_offset_str()
     per_date_data = tk.produce_summary_per_date(tz_offset_str)
     export_to_excel(data, per_date_data)
+
 
 def export_to_excel(data, per_date_data=None):
     columns = [
