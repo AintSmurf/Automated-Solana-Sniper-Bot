@@ -7,7 +7,7 @@ from helpers.credentials_utility import CredentialsUtility
 from config.settings import Settings
 from services.sql_db_utility import SqlDBUtility
 
-SINCE_TS = "2025-12-20 00:00:00"
+SINCE_TS = "2025-12-25 00:00:00"
 OUTPUT_PATH = "trigger_analysis.xlsx"
 
 feature_columns = [
