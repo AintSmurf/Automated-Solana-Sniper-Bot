@@ -33,9 +33,6 @@ DB_PASSWORD=super_secret_password
 
 PYTHONUNBUFFERED=1
 ---
-```
-2. docker compose -f docker-compose.stack.yml up -d --build
-
 ```env
 docker compose -f docker-compose.stack.yml up -d --build
 ```
@@ -43,7 +40,8 @@ docker compose -f docker-compose.stack.yml up -d --build
 ## Important Notes
 
 - DB_HOST=db – this is the service name of the Postgres container inside the Docker network.
-- If you still have an old standalone Postgres container (e.g. postgres on localhost:5432), that’s separate. For the new stack, keep DB_HOST=db so the bot talks to the stack Postgres, not the old one.
+- If you still have an old standalone Postgres container (e.g. postgres on localhost:5432), that’s separate. 
+- For the new stack, keep DB_HOST=db so the bot talks to the stack Postgres, not the old one.
 
 ---
 
@@ -53,7 +51,9 @@ docker compose -f docker-compose.stack.yml up -d --build
   - infra/ansible/inventory.example.ini
   - infra/ansible/group_vars/sniper_lab.example.yml
   - infra/ansible/env.example
-- Do not edit the *.example files directly. Copy them to files without the .example suffix and edit those.The real files (inventory.ini, sniper_lab.yml, .env) are usually in .gitignore so your secrets stay local.
+- Do not edit the *.example files directly. 
+- Copy them to files without the .example suffix and edit those.
+- The real files (inventory.ini, sniper_lab.yml, .env) are in .gitignore so your secrets stay local.
 
 1. Inventory (inventory.ini)
 2. Sniper stack variables (sniper_lab.yml or the playbook vars)
@@ -114,7 +114,7 @@ ansible-playbook \
   --ask-pass --ask-become-pass
 ```
 -usage
-- chmod +x deploy_v2.sh # once
-- ./deploy_v2.sh # deploy/update stack on the server
+- chmod +x deploy_v2.sh
+- ./deploy_v2.sh
 
 

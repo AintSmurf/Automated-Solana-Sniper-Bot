@@ -34,67 +34,48 @@ export DB_PASSWORD=""
 
 ```python
 {
-    #Solana blockchain mainnet- real, devnet-development/test network
-    "NETWORK":"mainnet"
-    
-    # Whether to run the bot with a UI (tkinter dashboard)
+    # Solana blockchain mainnet (real) / devnet (test)
+    "NETWORK": "mainnet",
+
+    # Modes
+    "SIM_MODE": True,
     "UI_MODE": False,
 
-    # Minimum liquidity required (USD) to consider a token worth trading
+    # Filters
     "MIN_TOKEN_LIQUIDITY": 10000,
-
-    # Maximum token age (in seconds) to be considered "fresh"
+    "MINIMUM_MARKETCAP": 50000,
     "MAX_TOKEN_AGE_SECONDS": 30,
-
-    # Amount (in USD) per trade (simulation or real)
-    "TRADE_AMOUNT": 10,
-
-    # Max number of successfully opened trades (real or sim) before the bot shuts down
-    "MAXIMUM_TRADES": 20,
-
-    # True = simulation mode, False = real trading
-    "SIM_MODE": True,
-
-    # Timeout conditions
-    "TIMEOUT_SECONDS": 180,           # After 180s, check if profit threshold met
-    "TIMEOUT_PROFIT_THRESHOLD": 1.03, # If < +3% profit → force exit
-    "TIMEOUT_PNL_FLOOR": -0.03,         # Do NOT timeout if PnL is below this (e.g. -3%); let SL/TSL handle deep losses
-    
-    # Minimum allowed post-buy safety score (from safety_results)
     "MIN_POST_BUY_SCORE": 3,
 
+    # Trade sizing / limits
+    "TRADE_AMOUNT": 10,
+    "MAXIMUM_TRADES": 20,
 
-    # Take profit and stop loss rules
-    "SLPG": 3.0,                      # SLPG is a percent expressed as a float (e.g. 3.0 = 3%). The bot converts SLPG → slippageBps for Jupiter by int(SLPG * 100) (so 3.0 → 300 bps).
-    "TP": 4.0,                        # +300% (4x entry)
-    "SL": 0.25,                       # 25% drop from entry
-    "TRAILING_STOP": 0.2,             # 20% below peak price
-    "MIN_TSL_TRIGGER_MULTIPLIER": 1.5,# TSL only kicks in after 1.5x
+    # Timeout behavior
+    "TIMEOUT_SECONDS": 180,
+    "TIMEOUT_PROFIT_THRESHOLD": 1.03,
+    "TIMEOUT_PNL_FLOOR": -0.03,
 
-    # Early-stop behaviour (used in check_emergency_sl)
-    "EARLY_SL_SECONDS": 20,             # How long trade is treated as "fresh" after its bought for early SL logic
-    "EARLY_SL_PCT": 0.07,               # -7% early-stop th
+    # Slippage + exits
+    "SLPG": 3.0,
+    "TP": 4.0,
+    "SL": 0.25,
+    "TRAILING_STOP": 0.2,
+    "MIN_TSL_TRIGGER_MULTIPLIER": 1.5,
+
+    # Early stop behavior
+    "EARLY_SL_SECONDS": 20,
+    "EARLY_SL_PCT": 0.07,
 
     # tokens under this USD value are eligible for dust cleanup
-    "DUST_THRESHOLD_USD":1,
+    "DUST_THRESHOLD_USD": 1,
 
-    # Ultra-low-latency Solana transaction submission via Helius Sender,
-    # optimized for high-frequency / competitive trading.
+    # Ultra-low-latency Solana transaction submission via Helius Sender
     "USE_SENDER": {
-        # Choose the region closest to your server for better landing speed.
-        # Available options are listed in config/network.py.
-        # maps to HELIUS_SENDER[...] in config/network.py
         "REGION": "global",
-
-        # If True: use Helius Sender path for buy transactions.
-        # Requires enough SOL for both the swap and the Jito/Helius tip.
         "BUY": False,
-
-        # If True: use Helius Sender path for sell transactions.
-        # Requires enough SOL for both the swap and the Jito/Helius tip.
-        "SELL": False,
-    },  
-
+        "SELL": False
+    },
 
     # Exit rule toggles
     "EXIT_RULES": {
@@ -104,25 +85,35 @@ export DB_PASSWORD=""
         "USE_TIMEOUT": False
     },
 
-    # Notification channels
+    # Notification toggles
     "NOTIFY": {
         "DISCORD": False,
         "TELEGRAM": False,
-        "SLACK": False,
+        "SLACK": False
+    },
+
+    # Notification channel mapping (only relevant if NOTIFY.<platform> is True)
+    "NOTIFY_CHANNELS": {
+        "DISCORD": {
+            "LIVE_CHANNEL": "live",
+            "NEW_TOKENS_CHANNEL": "new-tokens"
+        },
+        "TELEGRAM": {},
+        "SLACK": {}
     },
 
     # API rate limits
     "RATE_LIMITS": {
         "helius": {
-            "min_interval": 0.02,             # seconds between requests
-            "jitter_range": [0.005, 0.01],    # randomness to avoid bursts
-            "max_requests_per_minute": None,  # unlimited
+            "min_interval": 0.02,
+            "jitter_range": [0.005, 0.01],
+            "max_requests_per_minute": None,
             "name": "Helius_limits"
         },
         "jupiter": {
-            "min_interval": 1.1,              # seconds between requests
-            "jitter_range": [0.05, 0.15],     # randomness to avoid bursts
-            "max_requests_per_minute": 60,    # requests per minute
+            "min_interval": 1.1,
+            "jitter_range": [0.05, 0.15],
+            "max_requests_per_minute": 60,
             "name": "Jupiter_limits"
         }
     }
