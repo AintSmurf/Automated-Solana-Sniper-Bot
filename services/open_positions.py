@@ -128,6 +128,14 @@ class OpenPositionTracker:
                 pnl_percent=pnl,
                 trigger_reason=trigger,
             )
+            self.tracker_logger.info({
+                "event": "sell",
+                "token_mint": token_mint,
+                "trigger": trigger,
+                "pnl": pnl,
+                "exit_usd": current_price_usd,
+                "simulated": True,
+            })
 
             self.notifier.notify_text(
                 f"⚡ **Exit Triggered (SIM)** — `{token_mint}`\n"
@@ -212,7 +220,9 @@ class OpenPositionTracker:
                 "event": "sell",
                 "token_mint": token_mint,
                 "trigger": trigger,
-                "simulated": sim_mode,
+                "pnl": pnl,
+                "exit_usd": current_price_usd,
+                "simulated": True,
             })
             return True
 

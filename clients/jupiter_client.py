@@ -35,7 +35,7 @@ class JupiterClient:
                 self.logger.warning(f"⚠️ Quote attempt failed: {quote_response['error']}")
                 return {}
             self.logger.debug(f"Build swap transaction: {quote_response} Success.")
-            self.logger.info(f"📦 Jupiter Quote for{output_mint}: In = {quote_response['inAmount']}, Out = {quote_response['outAmount']}")
+            self.logger.info(f"Jupiter Quote for{output_mint}: In = {quote_response['inAmount']}, Out = {quote_response['outAmount']}")
             token_in = lamports_to_decimal(quote_response['inAmount'],self.ctx.get("helius_client").get_token_decimals(input_mint))
             token_out = lamports_to_decimal(quote_response['outAmount'],self.ctx.get("helius_client").get_token_decimals(output_mint))
             return {"quote_price":token_out/token_in,"inAmount":token_in,"outAmount":token_out,"quote":quote_response}
@@ -56,12 +56,9 @@ class JupiterClient:
 
     def get_swap_transaction(self, quote_response: dict):
         try:
-            self.ctx.get("jupiter_rl").wait()   
-            self.swap_payload["userPublicKey"] = str(self.ctx.get("wallet_client").get_public_key())
-            self.swap_payload["quoteResponse"] = quote_response
-            swap_response = self.jupiter_requests.post(
-                endpoint=JUPITER_STATION["SWAP_ENDPOINT"], payload=self.swap_payload
-            )
+            swap_response = self.get_swap_dict(quote_response)
+            if not swap_response or "swapTransaction" not in swap_response:
+                return None
             swap_txn_base64 = swap_response["swapTransaction"]
             try:
                 raw_bytes = base64.b64decode(swap_txn_base64)
@@ -203,3 +200,18 @@ class JupiterClient:
         except Exception as e:
             self.logger.warning(f"⚠️ Failed to fetch dynamic Jito tip, falling back to 0.001 SOL: {e}")
             return 0.001
+    
+    def get_swap_dict(self, quote_response: dict) -> dict | None:
+        try:
+            self.ctx.get("jupiter_rl").wait()
+            self.swap_payload["userPublicKey"] = str(self.ctx.get("wallet_client").get_public_key())
+            self.swap_payload["quoteResponse"] = quote_response
+
+            swap_response = self.jupiter_requests.post(
+                endpoint=JUPITER_STATION["SWAP_ENDPOINT"],
+                payload=self.swap_payload
+            )
+            return swap_response
+        except Exception as e:
+            self.logger.error(f"❌ Error getting swap response: {e}", exc_info=True)
+            return None

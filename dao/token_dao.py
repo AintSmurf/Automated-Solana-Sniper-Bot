@@ -55,36 +55,6 @@ class TokenDAO:
         res = self.sql_helper.execute_select(sql)
         return res if res else None
     
-    def produce_summary_results(self):
-        sql='''
-        SELECT t.token_address ,s.buy_signature ,s.sell_signature ,t2.entry_usd ,t2.exit_usd ,t2.pnl_percent ,t2.trigger_reason,t3.score,t4.market_cap 
-        FROM tokens t
-        INNER JOIN signatures s ON t.id = s.token_id 
-        INNER join trades t2 on t.id = t2.token_id
-        INNER join safety_results t3 on t.id = t3.token_id
-        INNER join token_stats t4 on t.id = t4.token_id
-        '''
-        res = self.sql_helper.execute_select(sql)
-        return res if res else None
-
-    def produce_summary_per_date(self, tz_offset_str: str):
-        sql = '''
-        SELECT
-            (
-                ("timestamp" AT TIME ZONE %s) - INTERVAL '7 hour'
-            )::date AS session_date,
-            COUNT(*)                           AS trade_count,
-            SUM(pnl_percent)                   AS total_pnl_percent,
-            AVG(pnl_percent)                   AS avg_pnl_percent,
-            SUM(CASE WHEN pnl_percent > 0 THEN 1 ELSE 0 END) AS winning_trades,
-            SUM(CASE WHEN pnl_percent < 0 THEN 1 ELSE 0 END) AS losing_trades
-        FROM trades
-        GROUP BY session_date
-        ORDER BY session_date;
-        '''
-        res = self.sql_helper.execute_select(sql, (tz_offset_str,))
-        return res if res else None
-
     def fetch_mint_signature(
             self,
             trigger_reason: Optional[str] = None,
@@ -125,60 +95,78 @@ class TokenDAO:
             res = self.sql_helper.execute_select(sql, tuple(params))
             return res if res else None
     
-    def produce_summary_results(self, since_ts: str | None = None):
-        base_sql = """
-        SELECT
-            t.token_address,
-            s.buy_signature,
-            s.sell_signature,
-            tr.entry_usd,
-            tr.exit_usd,
-            tr.pnl_percent,
-            tr.trigger_reason,
-            sr.score,
-            ts.market_cap
-        FROM tokens t
-        INNER JOIN signatures s      ON t.id = s.token_id
-        INNER JOIN trades tr         ON t.id = tr.token_id
-        INNER JOIN safety_results sr ON t.id = sr.token_id
-        INNER JOIN token_stats ts    ON t.id = ts.token_id
-        """
-        params = []
-        if since_ts:
-            base_sql += 'WHERE tr."timestamp" >= %s '
-            params.append(since_ts)
-
-        return self.sql_helper.execute_select(base_sql, tuple(params)) or None
-
-    def produce_summary_per_date(self, tz_offset_str: str, since_ts: str | None = None):
+    def _base_trades_cte(self, since_ts: str | None = None, limit: int | None = None):
         sql = """
-        SELECT
-            (
-                ("timestamp" AT TIME ZONE %s) - INTERVAL '7 hour'
-            )::date AS session_date,
-            COUNT(*) AS trade_count,
-            SUM(pnl_percent) AS total_pnl_percent,
-            AVG(pnl_percent) AS avg_pnl_percent,
-            SUM(CASE WHEN pnl_percent > 0 THEN 1 ELSE 0 END) AS winning_trades,
-            SUM(CASE WHEN pnl_percent < 0 THEN 1 ELSE 0 END) AS losing_trades
-        FROM trades
-        WHERE 1=1
+        WITH base_trades AS (
+            SELECT *
+            FROM trades
+            WHERE 1=1
         """
-        params = [tz_offset_str]
+        params: list = []
 
         if since_ts:
             sql += ' AND "timestamp" >= %s'
             params.append(since_ts)
 
         sql += """
+            ORDER BY "timestamp" DESC, id DESC
+        """
+
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(int(limit))
+
+        sql += """
+        )
+        """
+        return sql, params
+
+    def produce_summary_results(self, since_ts: str | None = None, limit: int | None = None):
+        cte, params = self._base_trades_cte(since_ts, limit)
+        sql = cte + """
+            SELECT
+                t.token_address,
+                s.buy_signature,
+                s.sell_signature,
+                tr.entry_usd,
+                tr.exit_usd,
+                tr.pnl_percent,
+                tr.trigger_reason,
+                sr.score,
+                ts.market_cap
+            FROM base_trades tr
+            JOIN tokens t              ON t.id = tr.token_id
+            JOIN signatures s          ON s.token_id = tr.token_id
+            JOIN safety_results sr     ON sr.token_id = tr.token_id
+            JOIN token_stats ts        ON ts.token_id = tr.token_id
+            ORDER BY tr."timestamp" DESC, tr.id DESC;
+            """
+
+        return self.sql_helper.execute_select(sql, tuple(params)) or None
+
+    def produce_summary_per_date(self, tz_offset_str: str, since_ts: str | None = None, limit: int | None = None):
+        cte, cte_params = self._base_trades_cte(since_ts, limit)
+
+        sql = cte + """
+        SELECT
+            ((tr."timestamp" AT TIME ZONE %s) - INTERVAL '7 hour')::date AS session_date,
+            COUNT(*) AS trade_count,
+            SUM(tr.pnl_percent) AS total_pnl_percent,
+            AVG(tr.pnl_percent) AS avg_pnl_percent,
+            SUM(CASE WHEN tr.pnl_percent > 0 THEN 1 ELSE 0 END) AS winning_trades,
+            SUM(CASE WHEN tr.pnl_percent < 0 THEN 1 ELSE 0 END) AS losing_trades
+        FROM base_trades tr
         GROUP BY session_date
         ORDER BY session_date;
         """
 
+        params = list(cte_params) + [tz_offset_str]
         return self.sql_helper.execute_select(sql, tuple(params)) or None
+   
+    def produce_exit_rule_stats(self, since_ts: str | None = None, limit: int | None = None):
+        cte, params = self._base_trades_cte(since_ts, limit)
 
-    def produce_exit_rule_stats(self, since_ts: str | None = None):
-        sql = """
+        sql = cte + """
         SELECT
             trigger_reason,
             COUNT(*) AS trade_count,
@@ -187,41 +175,27 @@ class TokenDAO:
             PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY pnl_percent) AS p95_pnl_percent,
             SUM(exit_usd - entry_usd) AS total_profit_usd,
             AVG(exit_usd - entry_usd) AS avg_profit_usd
-        FROM trades
-        WHERE 1=1
+        FROM base_trades
+        GROUP BY trigger_reason
+        ORDER BY total_profit_usd DESC;
         """
-        params = []
-
-        if since_ts:
-            sql += ' AND "timestamp" >= %s'
-            params.append(since_ts)
-
-        sql += " GROUP BY trigger_reason ORDER BY total_profit_usd DESC;"
 
         return self.sql_helper.execute_select(sql, tuple(params)) or None
 
-    def produce_liquidity_stats(self, since_ts: str | None = None):
-        sql = """
-        WITH liq_at_buy AS (
+    def produce_liquidity_stats(self, since_ts: str | None = None, limit: int | None = None):
+        cte, params = self._base_trades_cte(since_ts, limit)
+        sql = cte + """
+        , liq_at_buy AS (
             SELECT DISTINCT ON (tr.id)
                 tr.id AS trade_id,
                 tr.pnl_percent,
                 tr.entry_usd,
                 tr.exit_usd,
                 ls.total_liq
-            FROM trades tr
+            FROM base_trades tr
             JOIN liquidity_snapshots ls
-              ON ls.token_id = tr.token_id
-             AND ls."timestamp" <= tr."timestamp"
-            WHERE 1=1
-        """
-        params = []
-
-        if since_ts:
-            sql += ' AND tr."timestamp" >= %s'
-            params.append(since_ts)
-
-        sql += """
+            ON ls.token_id = tr.token_id
+            AND ls."timestamp" <= tr."timestamp"
             ORDER BY tr.id, ls."timestamp" DESC
         )
         SELECT
@@ -244,25 +218,18 @@ class TokenDAO:
 
         return self.sql_helper.execute_select(sql, tuple(params)) or None
 
-    def produce_safety_score_stats(self, since_ts: str | None = None):
-        sql = """
-        WITH trade_safety AS (
+    def produce_safety_score_stats(self, since_ts: str | None = None, limit: int | None = None):
+        cte, params = self._base_trades_cte(since_ts, limit)
+
+        sql = cte + """
+        , trade_safety AS (
             SELECT
                 tr.entry_usd,
                 tr.exit_usd,
                 tr.pnl_percent,
                 sr.score
-            FROM trades tr
+            FROM base_trades tr
             JOIN safety_results sr ON sr.token_id = tr.token_id
-            WHERE 1=1
-        """
-        params = []
-
-        if since_ts:
-            sql += ' AND tr."timestamp" >= %s'
-            params.append(since_ts)
-
-        sql += """
         )
         SELECT
             CASE
@@ -282,25 +249,19 @@ class TokenDAO:
 
         return self.sql_helper.execute_select(sql, tuple(params)) or None
 
-    def produce_hold_duration_stats(self, since_ts: str | None = None):
-        sql = """
-        WITH durations AS (
+    def produce_hold_duration_stats(self, since_ts: str | None = None, limit: int | None = None):
+        cte, params = self._base_trades_cte(since_ts, limit)
+
+        sql = cte + """
+        , durations AS (
             SELECT
                 tr.entry_usd,
                 tr.exit_usd,
                 tr.pnl_percent,
                 EXTRACT(EPOCH FROM (s.sell_time - s.buy_time)) AS hold_seconds
-            FROM trades tr
+            FROM base_trades tr
             JOIN signatures s ON s.token_id = tr.token_id
             WHERE s.sell_time IS NOT NULL
-        """
-        params = []
-
-        if since_ts:
-            sql += ' AND tr."timestamp" >= %s'
-            params.append(since_ts)
-
-        sql += """
         )
         SELECT
             CASE
@@ -320,25 +281,18 @@ class TokenDAO:
 
         return self.sql_helper.execute_select(sql, tuple(params)) or None
 
-    def produce_token_age_stats(self, since_ts: str | None = None):
-        sql = """
-        WITH ages AS (
+    def produce_token_age_stats(self, since_ts: str | None = None, limit: int | None = None):
+        cte, params = self._base_trades_cte(since_ts, limit)
+
+        sql = cte + """
+        , ages AS (
             SELECT
                 tr.entry_usd,
                 tr.exit_usd,
                 tr.pnl_percent,
                 EXTRACT(EPOCH FROM (tr."timestamp" - tok.detected_at)) AS age_seconds
-            FROM trades tr
+            FROM base_trades tr
             JOIN tokens tok ON tok.id = tr.token_id
-            WHERE 1=1
-        """
-        params = []
-
-        if since_ts:
-            sql += ' AND tr."timestamp" >= %s'
-            params.append(since_ts)
-
-        sql += """
         )
         SELECT
             CASE
@@ -544,3 +498,4 @@ class TokenDAO:
 
         all_params = tuple(params + feat_params)
         return self.sql_helper.execute_select(sql, all_params) or None
+    

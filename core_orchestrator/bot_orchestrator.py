@@ -30,7 +30,7 @@ from dao.volume_dao import VolumeDAO
 from dao.scam_checker_dao import ScamCheckerDao
 from dao.trade_dao import TradeDAO
 from dao.signature_dao import SignatureDAO
-from config.network import HELIUS_SENDER, DEFAULT_SENDER_REGION
+from config.network import HELIUS_SENDER, DEFAULT_SENDER_REGION,HELIUS_WS
 
 
 
@@ -43,6 +43,12 @@ class BotOrchestrator:
     def __init__(self, ctx: BotContext):
         self.ctx = ctx 
         self.settings = self.ctx.settings
+
+        #register plain rpcs
+        api_key = ctx.api_keys["helius"]
+        ctx.register("rpc_url", HELIUS_URL[self.settings["NETWORK"]] + api_key)
+        ctx.register("ws_url",  HELIUS_WS[self.settings["NETWORK"]] + api_key)
+
 
         # shared pipelines / caches
         ctx.register("prefetch_queue", queue.Queue(maxsize=1000))

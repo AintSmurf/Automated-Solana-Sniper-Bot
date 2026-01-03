@@ -32,22 +32,21 @@ class WalletClient:
         if not self.account:
             raise RuntimeError("Wallet not initialized. Call create_wallet() first.")
 
-        faucet_client = Client("https://api.devnet.solana.com")
+        faucet_client = Client(self.ctx.get("rpc_url"))
         balance_resp = faucet_client.get_balance(self.account.pubkey())
         current_balance = balance_resp.value or 0
 
         if current_balance < min_balance:
             sig = faucet_client.request_airdrop(self.account.pubkey(), amount)
-            self.logger.info(f"💧 Airdrop requested: {sig.value}")
+            self.logger.info(f"Airdrop requested: {sig.value}")
             return sig.value
         else:
             self.logger.info("✅ Wallet already funded above min balance.")
             return None
 
     def confirm_transaction(self, signature: str)->str:
-        """Confirm a transaction by its signature."""
         try:
-            self.client = Client(f"{self.ctx.get('helius_client')}{self.ctx.api_keys['helius']}")
+            self.client = Client(self.ctx.get("rpc_url"))
             return self.client.confirm_transaction(signature)
         except Exception as e:
             self.logger.error(f"❌ Error confirming transaction {signature}: {e}")
@@ -70,13 +69,17 @@ class WalletClient:
 
     def create_wallet(self)->dict:
         self.account = Keypair()
-        self.private_key = base58.b58encode(self.account.secret()).decode("utf-8")
+        self.private_key = base58.b58encode(bytes(self.account)).decode("utf-8")
         return {"publicKey": str(self.account.pubkey()), "privateKey": self.private_key}
 
-    def set_private_key(self, private_key_b58: str)->None:
-        self.private_key = private_key_b58
-        self.account = Keypair.from_base58_string(private_key_b58)
-        self.logger.info(f"🔑 Wallet loaded: {self.account.pubkey()}")
+    def set_private_key(self, private_key_b58: str):
+        raw = base58.b58decode(private_key_b58)
+        if len(raw) == 64:
+            self.account = Keypair.from_bytes(raw)
+        elif len(raw) == 32:
+            self.account = Keypair.from_seed(raw)
+        else:
+            raise ValueError(f"Invalid key length: {len(raw)}")
 
     def get_public_key(self)->str:
         return str(self.account.pubkey()) if self.account else ""

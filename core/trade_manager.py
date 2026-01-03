@@ -200,9 +200,18 @@ class TraderManager:
             self.logger.info(
                 f"💰 Trade closed for {token_mint} ({reason}) — PnL: {pnl_percent:.8f}% | Exit USD: {current_price_usd:.8f}"
             )
+            
             notifier = self.ctx.get("notification_manager")
             notifier.notify_text(f"💰 **SELL EXECUTED** — `{token_mint}`\n📈 PnL: {pnl_percent:.8f}%\n💵 Exit USD: {current_price_usd:.8f}\n⚙️ Reason: {reason}",self.live_channel)
-
+            self.tracker_logger.info({
+                    "event": "sell",
+                    "token_mint": token_mint,
+                    "trigger": reason,
+                    "pnl": pnl_percent,
+                    "exit_usd": current_price_usd,
+                    "signature": signature,
+                    "simulated": False,
+            })
             if tracker and token_mint in tracker.active_trades:
                 tracker.active_trades.pop(token_mint, None)
                 self.logger.debug(f"🧹 Removed {token_mint} from tracker cache.")

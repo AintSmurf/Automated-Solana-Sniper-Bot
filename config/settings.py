@@ -31,11 +31,12 @@ DEFAULT_SETTINGS = {
     # tokens under this USD value are eligible for dust cleanup
     "DUST_THRESHOLD_USD":1,
 
-    #
+    # early exit rules
     "EARLY_SL_SECONDS": 20,
     "EARLY_SL_PCT": 0.07,           
     "TIMEOUT_PNL_FLOOR": -0.03,
     "MIN_POST_BUY_SCORE": 3,
+    "MINIMUM_MARKETCAP":50000,
 
     # Ultra-low latency Solana transaction submission optimized for high-frequency trading.
     "USE_SENDER": {
@@ -198,16 +199,15 @@ class Settings:
         return settings["UI_MODE"]
 
     def validate_bot_settings(self, settings):
-        # Ensure all top-level keys exist
         for key in DEFAULT_SETTINGS:
             if key not in settings:
                 raise ValueError(f"Missing setting: {key}")
+
         # Network
         if not isinstance(settings["NETWORK"], str):
             raise TypeError("NETWORK must be a string")
         if settings["NETWORK"] not in ("mainnet", "devnet"):
-            raise ValueError(f"Invalid NETWORK: {settings['NETWORK']} (must be 'mainnet', 'devnet', or 'testnet')")
-
+            raise ValueError(f"Invalid NETWORK: {settings['NETWORK']} (must be 'mainnet' or 'devnet')")
 
         # Core numbers
         if not isinstance(settings["MIN_TOKEN_LIQUIDITY"], (int, float)):
@@ -228,13 +228,29 @@ class Settings:
         if not isinstance(settings["UI_MODE"], bool):
             raise TypeError("UI_MODE must be a bool")
 
-        # Trading thresholds
-        for key in ["TP", "SL", "TRAILING_STOP", "MIN_TSL_TRIGGER_MULTIPLIER", "TIMEOUT_PROFIT_THRESHOLD"]:
+        # Trading thresholds (numbers)
+        numeric_keys = [
+            "TP", "SL", "TRAILING_STOP", "MIN_TSL_TRIGGER_MULTIPLIER",
+            "TIMEOUT_PROFIT_THRESHOLD", "TIMEOUT_PNL_FLOOR",
+            "EARLY_SL_PCT", "MINIMUM_MARKETCAP", "SLPG"
+        ]
+        for key in numeric_keys:
+            if key not in settings:
+                raise ValueError(f"Missing setting: {key}")
             if not isinstance(settings[key], (int, float)):
                 raise TypeError(f"{key} must be a number (int or float)")
 
-        if not isinstance(settings["TIMEOUT_SECONDS"], int):
-            raise TypeError("TIMEOUT_SECONDS must be an integer")
+        # Integer keys
+        int_keys = ["TIMEOUT_SECONDS", "MIN_POST_BUY_SCORE", "EARLY_SL_SECONDS"]
+        for key in int_keys:
+            if key not in settings:
+                raise ValueError(f"Missing setting: {key}")
+            if not isinstance(settings[key], int):
+                raise TypeError(f"{key} must be an integer")
+
+        # DUST can be int or float (you use USD)
+        if not isinstance(settings["DUST_THRESHOLD_USD"], (int, float)):
+            raise TypeError("DUST_THRESHOLD_USD must be a number (int or float)")
 
         # Exit rules
         exit_rules = settings.get("EXIT_RULES", {})
@@ -246,6 +262,16 @@ class Settings:
             if not isinstance(exit_rules[k], bool):
                 raise TypeError(f"EXIT_RULES.{k} must be a bool")
 
+        # Sender setting
+        sender = settings.get("USE_SENDER", {})
+        if not isinstance(sender, dict):
+            raise TypeError("USE_SENDER must be a dict")
+        for k in ["BUY", "SELL"]:
+            if not isinstance(sender.get(k), bool):
+                raise TypeError(f"USE_SENDER.{k} must be a bool")
+        if not isinstance(sender.get("REGION"), str):
+            raise TypeError("USE_SENDER.REGION must be a string")
+
         # Notification settings
         notify = settings.get("NOTIFY", {})
         if not isinstance(notify, dict):
@@ -256,22 +282,30 @@ class Settings:
 
         # API rate limits
         rl = settings.get("RATE_LIMITS", {})
+        if not isinstance(rl, dict):
+            raise TypeError("RATE_LIMITS must be a dict")
+
         for api in ["helius", "jupiter"]:
             if api not in rl:
                 raise ValueError(f"Missing RATE_LIMITS config for: {api}")
-            if not isinstance(rl[api].get("min_interval"), (int, float)):
+
+            cfg = rl[api]
+            if not isinstance(cfg, dict):
+                raise TypeError(f"RATE_LIMITS.{api} must be a dict")
+
+            if not isinstance(cfg.get("min_interval"), (int, float)):
                 raise TypeError(f"{api} min_interval must be a number")
-            if not isinstance(rl[api].get("max_requests_per_minute"), (int, float, type(None))):
+
+            if not isinstance(cfg.get("max_requests_per_minute"), (int, float, type(None))):
                 raise TypeError(f"{api} max_requests_per_minute must be a number or None")
 
-            jitter = rl[api].get("jitter_range")
+            jitter = cfg.get("jitter_range")
             if not (
                 isinstance(jitter, (list, tuple)) and
                 len(jitter) == 2 and
                 all(isinstance(j, (int, float)) for j in jitter)
             ):
                 raise TypeError(f"{api} jitter_range must be a list/tuple of 2 numbers")
-
 
         logger.info("✅ BOT_SETTINGS validation passed")
         return True
