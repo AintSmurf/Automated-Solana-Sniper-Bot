@@ -5,10 +5,20 @@
 
 ## Overview  
 
-**Automated Solana Sniper Bot (v3.4.3)** is a modular, database-backed system for real-time token detection (Helius), automated trading (Jupiter), and position management (with live tracking, exit rules, and UI dashboard).  
+**Automated Solana Sniper Bot (v4.3.6)** is a modular, database-backed system for real-time token detection (Helius), automated trading (Jupiter), and position management (with live tracking, exit rules, and UI dashboard).  
 
 The system has evolved from CSV-based simulation to full **SQL persistence**, enabling advanced analytics, smoother UI integration, and fault-tolerant trade recovery.
 
+---
+### Latest (v4.3.6)
+- Updated Jupiter quote/swap calls to match the latest endpoint / payload changes.
+- `post_delayed_buy` is now wired into the bot runtime (delayed execution after buy).
+- Tracking + DB consistency fixes to reduce “stuck token” / repeated tracking behavior.
+
+Docs:
+- Configuration: `docs/CONFIGURATION.md`
+- Deployment: `docs/DEPLOYMENT_ANSIBLE.md`
+- Changelog: `CHANGELOG.md`
 ---
 
 ## Features

@@ -3,8 +3,24 @@
 All notable changes to this project will be documented in this file.  
 
 ---
-## [3.4.3] – Ansible Deploy Stack, Early Exit Tuning & Post-Buy Integration
+## [4.3.6] – Jupiter API update, post_delayed_buy wiring, and stability fixes
 
+### Added
+
+  - Connected post_delayed_buy flow into the bot runtime (automatic queue after buy / delayed execution).
+  - Extra settings/config wiring to support the new delayed-buy behavior.
+
+### Changed
+- Updated Jupiter quote/swap calls to match the latest endpoint / payload changes.
+- OpenPositionTracker cleanup: trades are removed from memory on close, reducing tracking/log spam.
+
+### Fixed
+- TokenDAO / DB consistency improvements (dedupe / cleanup around token insert + metadata handling).
+- Wallet / trade tracking reliability improvements to reduce “stuck token” behavior after close.
+
+---
+
+## [3.4.3] – Ansible Deploy Stack, Early Exit Tuning & Post-Buy Integration
 ### Added
 
 #### Simple Docker / Ansible deployment story
