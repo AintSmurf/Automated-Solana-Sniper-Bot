@@ -3,6 +3,35 @@
 All notable changes to this project will be documented in this file.  
 
 ---
+## [4.3.7] – Helius getTokenAccountsByOwnerV2 + Dust Cleaner reliability
+
+### Added
+- Helius RPC support for `getTokenAccountsByOwnerV2` (cursor-based pagination via `paginationKey`; optional `changedSinceSlot`).
+- Token-account discovery now returns enough info to reliably burn/close dust, even in large wallets.
+
+### Changed
+- Updated `get_token_accounts_by_owner(...)` to use V2 response shape:
+  - `result.value[]` items + `paginationKey`.
+- Parsing now returns consistent fields:
+  - `mint`, `amount` (raw int), `decimals`, `pub_key` (token account), and `program_id` (Token vs Token-2022).
+
+### Fixed
+- Dust cleaner reliability:
+  - Correct token account (ATA) is selected for the mint (largest `amount`, must be > 0).
+  - Uses the correct token program (`TOKEN_PROGRAM_ID` vs `TOKEN_2022_PROGRAM_ID`) to avoid `InvalidAccountData`.
+  - Only logs “Burned & closed” when a real signature is returned.
+- Logging improvements around:
+  - dust decisions,
+  - blockhash fetch,
+  - transaction simulation failure visibility.
+- Sell reliability:
+  - SELL no longer skips due to `tokens == 0` caused by incorrect / partial balance discovery.
+  - Uses V2 token-account discovery and raw base-unit amount to compute the real input before quoting.
+
+
+
+
+
 ## [4.3.6] – Jupiter API update, post_delayed_buy wiring, and stability fixes
 
 ### Added

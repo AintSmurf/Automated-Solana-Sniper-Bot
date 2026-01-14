@@ -31,6 +31,8 @@ from dao.scam_checker_dao import ScamCheckerDao
 from dao.trade_dao import TradeDAO
 from dao.signature_dao import SignatureDAO
 from config.network import HELIUS_SENDER, DEFAULT_SENDER_REGION,HELIUS_WS
+from dao.config_version_dao import ConfigVersionDAO
+from dao.price_sample_dao import PriceSampleDAO
 
 
 
@@ -91,6 +93,10 @@ class BotOrchestrator:
         ctx.register("trade_counter", TradeCounter(self.settings["MAXIMUM_TRADES"]))
         ctx.register("liquidity_analyzer", LiquidityAnalyzer(ctx))
         ctx.register("scam_checker", ScamChecker(ctx))
+        ctx.register("price_sample_dao", PriceSampleDAO(ctx))
+        ctx.register("config_version_dao", ConfigVersionDAO(ctx))
+
+
 
         # 3. Transport / HTTP Clients
         ctx.register("helius_requests", RequestsUtility(HELIUS_URL[self.settings["NETWORK"]]))
@@ -126,6 +132,15 @@ class BotOrchestrator:
 
         self.logger.info("✅ BotOrchestrator wiring complete")
 
+        cfg_dao = ctx.get("config_version_dao")
+        try:
+            label = self.settings.get("RUN_LABEL") or "Run – auto"
+            config_id = cfg_dao.get_or_create_config(label=label, settings=self.settings)
+            ctx.register("config_id", config_id)
+            logger.info(f"🧾 Config snapshot ready: config_id={config_id}, label={label}")
+        except Exception as e:
+            logger.error(f"❌ Failed to get/create config_version: {e}", exc_info=True)
+            ctx.register("config_id", None)
         # Stop flags
         self.stops = {
             "ws": threading.Event(),

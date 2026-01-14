@@ -4,17 +4,12 @@ import base58,base64
 from services.bot_context import BotContext
 from helpers.framework_utils import calculate_tokens
 from solders.pubkey import Pubkey
-from config.dex_detection_rules import KNOWN_TOKENS
+from config.dex_detection_rules import KNOWN_TOKENS,PROGRAMS
 from spl.token.instructions import burn, BurnParams,close_account, CloseAccountParams
 from solders.message import MessageV0
 from spl.token.constants import TOKEN_PROGRAM_ID
 from solders.transaction import VersionedTransaction
 from solders.hash import Hash
-
-
-
-
-
 
 
 
@@ -96,15 +91,21 @@ class WalletClient:
         except Exception as e:
             self.logger.error(f"❌ Failed to fetch balances: {e}", exc_info=True)
             return []
-    
+
     def get_token_balances(self) -> list[dict]:
         try:
-            token_balances = calculate_tokens(self.ctx.get("helius_client").get_token_accounts_by_owner(self.get_public_key()))
-            return [b for b in token_balances if b["balance"] > 0]
+            owner = self.get_public_key()
+            helius = self.ctx.get("helius_client")
+
+            a1 = helius.get_token_accounts_by_owner(owner, program_id=PROGRAMS["SPL_TOKEN_PROGRAM_ID"])
+            a2 = helius.get_token_accounts_by_owner(owner, program_id=PROGRAMS["TOKEN_2022_PROGRAM_ID"])
+
+            token_balances = calculate_tokens(a1 + a2)
+            return [b for b in token_balances if float(b.get("balance", 0) or 0) > 0]
         except Exception as e:
             self.logger.error(f"❌ Failed to fetch balances: {e}", exc_info=True)
             return []
-    
+
     def get_keypair(self) -> Keypair:
         if not self.account:
             raise RuntimeError("Wallet not initialized. Call set_private_key() or create_wallet() first.")
@@ -146,14 +147,16 @@ class WalletClient:
                 if not accounts:
                     continue
 
-                acc = accounts[0]
+                acc = max(accounts, key=lambda a: int(a["amount"]))
                 token_account_pk = Pubkey.from_string(acc["pub_key"])
-                raw_amount = int(acc["amount"])  
+                raw_amount = int(acc["amount"])
+                program_pk = Pubkey.from_string(acc.get("program_id", str(TOKEN_PROGRAM_ID)))
+  
 
                 # Build burn instruction
                 burn_ix = burn(
                     BurnParams(
-                        program_id=TOKEN_PROGRAM_ID,
+                        program_id=program_pk,
                         account=token_account_pk,
                         mint=Pubkey.from_string(token_mint),
                         owner=wallet_pubkey,
@@ -164,7 +167,7 @@ class WalletClient:
                 # Close empty account afterwards
                 close_ix = close_account(
                     CloseAccountParams(
-                        program_id=TOKEN_PROGRAM_ID,
+                        program_id=program_pk,
                         account=token_account_pk,
                         dest=wallet_pubkey,
                         owner=wallet_pubkey
@@ -189,6 +192,9 @@ class WalletClient:
 
                 # Send
                 signature = helius.send_transaction(signed_tx_base64)
+                if not signature:
+                    self.logger.warning(f"❌ Failed burn/close for {token_mint}")
+                    continue
                 self.logger.info(f"✨ Burned & closed {token_mint}. Sig: {signature}")
 
                 closed_tokens.append(token_mint)

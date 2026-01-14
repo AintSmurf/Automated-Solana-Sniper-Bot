@@ -7,6 +7,7 @@ from typing import Iterable, Optional, Literal
 
 
 
+
 class TokenDAO:
     def __init__(self, ctx: BotContext):
         self.sql_helper: SqlDBUtility = ctx.get("sql_db")
@@ -95,7 +96,12 @@ class TokenDAO:
             res = self.sql_helper.execute_select(sql, tuple(params))
             return res if res else None
     
-    def _base_trades_cte(self, since_ts: str | None = None, limit: int | None = None):
+    def _base_trades_cte(
+        self,
+        since_ts: str | None = None,
+        limit: int | None = None,
+        config_id: int | None = None,
+    ):
         sql = """
         WITH base_trades AS (
             SELECT *
@@ -107,6 +113,10 @@ class TokenDAO:
         if since_ts:
             sql += ' AND "timestamp" >= %s'
             params.append(since_ts)
+
+        if config_id is not None:
+            sql += " AND config_id = %s"
+            params.append(int(config_id))
 
         sql += """
             ORDER BY "timestamp" DESC, id DESC
@@ -121,8 +131,8 @@ class TokenDAO:
         """
         return sql, params
 
-    def produce_summary_results(self, since_ts: str | None = None, limit: int | None = None):
-        cte, params = self._base_trades_cte(since_ts, limit)
+    def produce_summary_results(self, since_ts: str | None = None, limit: int | None = None, config_id: int | None = None):
+        cte, params = self._base_trades_cte(since_ts, limit, config_id)
         sql = cte + """
             SELECT
                 t.token_address,
@@ -135,17 +145,22 @@ class TokenDAO:
                 sr.score,
                 ts.market_cap
             FROM base_trades tr
-            JOIN tokens t              ON t.id = tr.token_id
-            JOIN signatures s          ON s.token_id = tr.token_id
-            JOIN safety_results sr     ON sr.token_id = tr.token_id
-            JOIN token_stats ts        ON ts.token_id = tr.token_id
+            JOIN tokens t          ON t.id = tr.token_id
+            JOIN signatures s      ON s.token_id = tr.token_id
+            JOIN safety_results sr ON sr.token_id = tr.token_id
+            JOIN token_stats ts    ON ts.token_id = tr.token_id
             ORDER BY tr."timestamp" DESC, tr.id DESC;
-            """
-
+        """
         return self.sql_helper.execute_select(sql, tuple(params)) or None
 
-    def produce_summary_per_date(self, tz_offset_str: str, since_ts: str | None = None, limit: int | None = None):
-        cte, cte_params = self._base_trades_cte(since_ts, limit)
+    def produce_summary_per_date(
+        self,
+        tz_offset_str: str,
+        since_ts: str | None = None,
+        limit: int | None = None,
+        config_id: int | None = None,
+    ):
+        cte, cte_params = self._base_trades_cte(since_ts, limit, config_id)
 
         sql = cte + """
         SELECT
@@ -162,9 +177,10 @@ class TokenDAO:
 
         params = list(cte_params) + [tz_offset_str]
         return self.sql_helper.execute_select(sql, tuple(params)) or None
-   
-    def produce_exit_rule_stats(self, since_ts: str | None = None, limit: int | None = None):
-        cte, params = self._base_trades_cte(since_ts, limit)
+
+    def produce_exit_rule_stats(self, since_ts: str | None = None, limit: int | None = None, config_id: int | None = None):
+        cte, params = self._base_trades_cte(since_ts, limit, config_id)
+
 
         sql = cte + """
         SELECT
@@ -182,8 +198,8 @@ class TokenDAO:
 
         return self.sql_helper.execute_select(sql, tuple(params)) or None
 
-    def produce_liquidity_stats(self, since_ts: str | None = None, limit: int | None = None):
-        cte, params = self._base_trades_cte(since_ts, limit)
+    def produce_liquidity_stats(self, since_ts: str | None = None, limit: int | None = None, config_id: int | None = None):
+        cte, params = self._base_trades_cte(since_ts, limit, config_id)
         sql = cte + """
         , liq_at_buy AS (
             SELECT DISTINCT ON (tr.id)
@@ -218,9 +234,8 @@ class TokenDAO:
 
         return self.sql_helper.execute_select(sql, tuple(params)) or None
 
-    def produce_safety_score_stats(self, since_ts: str | None = None, limit: int | None = None):
-        cte, params = self._base_trades_cte(since_ts, limit)
-
+    def produce_safety_score_stats(self, since_ts: str | None = None, limit: int | None = None, config_id: int | None = None):
+        cte, params = self._base_trades_cte(since_ts, limit, config_id)
         sql = cte + """
         , trade_safety AS (
             SELECT
@@ -249,9 +264,8 @@ class TokenDAO:
 
         return self.sql_helper.execute_select(sql, tuple(params)) or None
 
-    def produce_hold_duration_stats(self, since_ts: str | None = None, limit: int | None = None):
-        cte, params = self._base_trades_cte(since_ts, limit)
-
+    def produce_hold_duration_stats(self, since_ts: str | None = None, limit: int | None = None, config_id: int | None = None):
+        cte, params = self._base_trades_cte(since_ts, limit, config_id)
         sql = cte + """
         , durations AS (
             SELECT
@@ -281,8 +295,8 @@ class TokenDAO:
 
         return self.sql_helper.execute_select(sql, tuple(params)) or None
 
-    def produce_token_age_stats(self, since_ts: str | None = None, limit: int | None = None):
-        cte, params = self._base_trades_cte(since_ts, limit)
+    def produce_token_age_stats(self, since_ts: str | None = None, limit: int | None = None, config_id: int | None = None):
+        cte, params = self._base_trades_cte(since_ts, limit, config_id)
 
         sql = cte + """
         , ages AS (

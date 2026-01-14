@@ -71,7 +71,7 @@ class TraderManager:
                     self.logger.warning(f"⚠️ Waiting timeout for {input_mint} confirmation.")
 
             tokens = 0
-            balances = self.ctx.get("wallet_client").get_account_balances()
+            balances = self.ctx.get("wallet_client").get_token_balances()
             for token in balances:
                 if token["token_mint"] == input_mint:
                     lamport_amount = token["balance"]
@@ -137,6 +137,8 @@ class TraderManager:
         trade_dao = self.ctx.get("trade_dao")
         sig_dao = self.ctx.get("signatures_dao")
         tracker = self.ctx.get("open_position_tracker")
+        config_id = self.ctx.get("config_id") 
+
 
         try:
             for attempt in range(3):
@@ -155,7 +157,7 @@ class TraderManager:
             trade_id = trade_dao.insert_trade(
                 token_id, "BUY", usd_amount, simulation=sim, status=status.upper(),
                 confirmed_at=now_utc if status == "confirmed" else None,
-                finalized_at=now_utc if status == "finalized" else None
+                finalized_at=now_utc if status == "finalized" else None,config_id=config_id
             )
             sig_dao.insert_signature(token_id, buy_signature=signature)
             trade_row = trade_dao.get_trade_by_id(trade_id)
@@ -225,6 +227,7 @@ class TraderManager:
         trade_dao = self.ctx.get("trade_dao")
         sig_dao = self.ctx.get("signatures_dao")
         tracker = self.ctx.get("open_position_tracker")
+        config_id = self.ctx.get("config_id")
 
         token_id = token_dao.get_or_create_token(output_mint, None)
         now_utc = datetime.now(timezone.utc)
@@ -237,6 +240,7 @@ class TraderManager:
             status="SIMULATED",
             confirmed_at=now_utc,
             finalized_at=now_utc,
+            config_id=config_id
         )
         sig_dao.insert_signature(token_id, buy_signature=f"SIMULATED_BUY_{get_formatted_date_str()}", sell_signature=None)
 

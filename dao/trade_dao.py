@@ -3,29 +3,92 @@ from services.bot_context import BotContext
 from datetime import datetime, timezone
 
 
+
 class TradeDAO:
     def __init__(self, ctx: BotContext):
         self.sql_helper: SqlDBUtility = ctx.get("sql_db")
-
-    def insert_trade(self, token_id, trade_type, entry_usd, simulation=False,
-                     status=None, confirmed_at=None, finalized_at=None):
-        current_ts = datetime.now(timezone.utc)
-        confirmed_at = confirmed_at or current_ts
-        finalized_at = finalized_at or current_ts
-
+    
+    def get_buy_trades_for_backtest_rows(
+        self,
+        config_id: int,
+        start_ts: str,
+        end_ts: str,
+        simulation: bool = True,
+    ):
         sql = """
-            INSERT INTO trades (
-                token_id, trade_type, entry_usd, simulation,
-                status, confirmed_at, finalized_at, timestamp
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id;
+            SELECT
+                tr.id                AS trade_id,
+                tr.token_id,
+                tok.token_address,
+                tr.entry_usd,
+                tr.exit_usd,
+                tr.pnl_percent       AS live_pnl_percent,
+                tr.trade_type,
+                tr.simulation,
+                tr.status,
+                tr.timestamp         AS entry_time,
+                tr.config_id,
+                COALESCE(sr.score, 0) AS safety_score,
+                ts.market_cap
+            FROM trades tr
+            JOIN tokens tok ON tok.id = tr.token_id
+            LEFT JOIN safety_results sr ON sr.id = tr.safety_result_id
+            LEFT JOIN token_stats ts ON ts.token_id = tr.token_id
+            WHERE tr.config_id = %s
+            AND tr.simulation = %s
+            AND tr.trade_type = 'BUY'
+            AND tr.timestamp >= %s
+            AND tr.timestamp < %s
+            ORDER BY tr.timestamp;
         """
-        params = (
-            token_id, trade_type, entry_usd, simulation,
-            status, confirmed_at, finalized_at, current_ts
-        )
-        return self.sql_helper.execute_insert(sql, params)
+        return self.sql_helper.execute_select(sql, (config_id, simulation, start_ts, end_ts))
+
+    def insert_trade(
+            self,
+            token_id,
+            trade_type,
+            entry_usd,
+            simulation=False,
+            status=None,
+            confirmed_at=None,
+            finalized_at=None,
+            config_id=None,
+            safety_result_id=None,
+            volume_snapshot_id=None,
+        ):
+            current_ts = datetime.now(timezone.utc)
+
+            sql = """
+                INSERT INTO trades (
+                    token_id,
+                    trade_type,
+                    entry_usd,
+                    simulation,
+                    status,
+                    confirmed_at,
+                    finalized_at,
+                    timestamp,
+                    config_id,
+                    safety_result_id,
+                    volume_snapshot_id
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id;
+            """
+            params = (
+                token_id,
+                trade_type,
+                entry_usd,
+                simulation,
+                status,
+                confirmed_at,          
+                finalized_at,          
+                current_ts,
+                config_id,            
+                safety_result_id,      
+                volume_snapshot_id,
+            )
+            return self.sql_helper.execute_insert(sql, params)
 
     def get_trade_by_signature(self, signature: str):
         sql = "SELECT * FROM trades WHERE signature = %s;"

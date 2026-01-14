@@ -5,21 +5,22 @@
 
 ## Overview  
 
-**Automated Solana Sniper Bot (v4.3.6)** is a modular, database-backed system for real-time token detection (Helius), automated trading (Jupiter), and position management (with live tracking, exit rules, and UI dashboard).  
+**Automated Solana Sniper Bot (v4.3.7)** is a modular, database-backed system for real-time token detection (Helius), automated trading (Jupiter), and position management (with live tracking, exit rules, and UI dashboard).  
 
 The system has evolved from CSV-based simulation to full **SQL persistence**, enabling advanced analytics, smoother UI integration, and fault-tolerant trade recovery.
 
 ---
-### Latest (v4.3.6)
-- Updated Jupiter quote/swap calls to match the latest endpoint / payload changes.
-- `post_delayed_buy` is now wired into the bot runtime (delayed execution after buy).
-- Tracking + DB consistency fixes to reduce “stuck token” / repeated tracking behavior.
+### Latest (v4.3.7)
+- Added Helius `getTokenAccountsByOwnerV2` support (cursor pagination + scalable wallet portfolio queries).
+- Updated wallet token-account discovery to reliably fetch the correct ATA for a given mint (used by Dust Cleaner and other flows).
+- Improved Dust Cleaner reliability:
+  - Uses correct mint→token-account lookup before burn/close.
+  - Better logging around blockhash + send_transaction simulation results.
+  - Prevents accidental cleanup of known base tokens (SOL/USDC/USDT/etc).
 
 Docs:
 - Configuration: `docs/CONFIGURATION.md`
-- Deployment: `docs/DEPLOYMENT_ANSIBLE.md`
 - Changelog: `CHANGELOG.md`
----
 
 ## Features
 

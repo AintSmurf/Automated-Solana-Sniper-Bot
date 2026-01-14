@@ -184,7 +184,9 @@ class JupiterClient:
 
     def get_token_worth_in_usd(self, mint: str, token_amount: float) -> float:
         usd_price = self.get_token_price(mint)
-        return token_amount * usd_price
+        if usd_price is None:
+            return 0.0
+        return float(token_amount) * float(usd_price)
 
     def _get_dynamic_tip_sol(self) -> float:
         try:

@@ -48,7 +48,6 @@ def create_database():
                 raise
 
 def create_tables():
-    
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             conn_params = {
@@ -69,35 +68,36 @@ def create_tables():
                         detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                     """)
+
                     # TOKEN VOLUME
                     cur.execute("""
-                        CREATE TABLE IF NOT EXISTS token_volumes (
-                            id SERIAL PRIMARY KEY,
-                            token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
-                            buy_usd DOUBLE PRECISION DEFAULT 0,
-                            sell_usd DOUBLE PRECISION DEFAULT 0,
-                            total_usd DOUBLE PRECISION DEFAULT 0,
-                            buy_count INT DEFAULT 0,
-                            sell_count INT DEFAULT 0,
-                            buy_ratio DOUBLE PRECISION DEFAULT 0,
-                            net_flow DOUBLE PRECISION DEFAULT 0,
-                            launch_time TIMESTAMP,
-                            launch_volume DOUBLE PRECISION DEFAULT 0,
-                            delta_volume DOUBLE PRECISION DEFAULT 0,
-                            snapshot_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        );
+                    CREATE TABLE IF NOT EXISTS token_volumes (
+                        id SERIAL PRIMARY KEY,
+                        token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
+                        buy_usd DOUBLE PRECISION DEFAULT 0,
+                        sell_usd DOUBLE PRECISION DEFAULT 0,
+                        total_usd DOUBLE PRECISION DEFAULT 0,
+                        buy_count INT DEFAULT 0,
+                        sell_count INT DEFAULT 0,
+                        buy_ratio DOUBLE PRECISION DEFAULT 0,
+                        net_flow DOUBLE PRECISION DEFAULT 0,
+                        launch_time TIMESTAMP,
+                        launch_volume DOUBLE PRECISION DEFAULT 0,
+                        delta_volume DOUBLE PRECISION DEFAULT 0,
+                        snapshot_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
                     """)
-
 
                     # TOKEN STATS
                     cur.execute("""
-                        CREATE TABLE IF NOT EXISTS token_stats (
-                            id SERIAL PRIMARY KEY,
-                            token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
-                            market_cap DOUBLE PRECISION,
-                            holders_count INT
-                        );
+                    CREATE TABLE IF NOT EXISTS token_stats (
+                        id SERIAL PRIMARY KEY,
+                        token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
+                        market_cap DOUBLE PRECISION,
+                        holders_count INT
+                    );
                     """)
+
                     # SAFETY RESULTS
                     cur.execute("""
                     CREATE TABLE IF NOT EXISTS safety_results (
@@ -114,22 +114,21 @@ def create_tables():
 
                     # TRADES
                     cur.execute("""
-                        CREATE TABLE IF NOT EXISTS trades (
-                            id SERIAL PRIMARY KEY,
-                            token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
-                            trade_type TEXT,
-                            entry_usd DOUBLE PRECISION,
-                            exit_usd DOUBLE PRECISION,
-                            pnl_percent DOUBLE PRECISION,
-                            trigger_reason TEXT,
-                            simulation BOOLEAN,
-                            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            status TEXT,
-                            confirmed_at TIMESTAMP,
-                            finalized_at TIMESTAMP
-                        );
+                    CREATE TABLE IF NOT EXISTS trades (
+                        id SERIAL PRIMARY KEY,
+                        token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
+                        trade_type TEXT,
+                        entry_usd DOUBLE PRECISION,
+                        exit_usd DOUBLE PRECISION,
+                        pnl_percent DOUBLE PRECISION,
+                        trigger_reason TEXT,
+                        simulation BOOLEAN,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        status TEXT,
+                        confirmed_at TIMESTAMP,
+                        finalized_at TIMESTAMP
+                    );
                     """)
-
 
                     # LIQUIDITY SNAPSHOTS
                     cur.execute("""
@@ -166,6 +165,54 @@ def create_tables():
                         buy_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         sell_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
+                    """)
+
+                    # ─────────────────────────────
+                    # NEW STUFF FOR BACKTESTING
+                    # ─────────────────────────────
+
+                    # 1) Config snapshot table – final shape for new installs
+                    cur.execute("""
+                    CREATE TABLE IF NOT EXISTS config_versions (
+                        id SERIAL PRIMARY KEY,
+                        label TEXT,
+                        settings_json JSONB NOT NULL,
+                        config_hash TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    """)
+
+                    # Unique hash so identical configs reuse the same row
+                    cur.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_config_versions_hash
+                    ON config_versions(config_hash);
+                    """)
+
+                    # 2) Extra FKs on trades (config + safety/volume/liquidity)
+                    cur.execute("""
+                    ALTER TABLE trades
+                        ADD COLUMN IF NOT EXISTS config_id INT REFERENCES config_versions(id),
+                        ADD COLUMN IF NOT EXISTS safety_result_id INT REFERENCES safety_results(id),
+                        ADD COLUMN IF NOT EXISTS volume_snapshot_id INT REFERENCES token_volumes(id),
+                        ADD COLUMN IF NOT EXISTS liquidity_snapshot_id INT REFERENCES liquidity_snapshots(id);
+                    """)
+
+                    # 3) Price samples per trade (for offline TP/SL/TSL sims)
+                    cur.execute("""
+                    CREATE TABLE IF NOT EXISTS price_samples (
+                        id SERIAL PRIMARY KEY,
+                        trade_id INT REFERENCES trades(id) ON DELETE CASCADE,
+                        token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
+                        timestamp TIMESTAMPTZ NOT NULL,
+                        price_usd DOUBLE PRECISION NOT NULL,
+                        pnl_percent DOUBLE PRECISION
+                    );
+                    """)
+
+                    # Helpful index for replaying trades
+                    cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_price_samples_trade_ts
+                    ON price_samples(trade_id, timestamp);
                     """)
 
                     conn.commit()

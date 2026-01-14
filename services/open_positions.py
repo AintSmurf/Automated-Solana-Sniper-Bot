@@ -17,7 +17,10 @@ class OpenPositionTracker:
         self.trade_dao = ctx.get("trade_dao")
         self.trader = ctx.get("trader")
         self.notifier = ctx.get("notification_manager")
-
+        
+        
+        self.last_price_sample: dict[str, float] = {}
+        self.price_sample_interval = 15
         self.active_trades = {}
         self.peak_price_dict = {}
         self.buy_timestamp = {}
@@ -73,6 +76,7 @@ class OpenPositionTracker:
     def _evaluate_trades(self):
         jup = self.ctx.get("jupiter_client")
         hel = self.ctx.get("helius_client")
+        price_sample_dao = self.ctx.get("price_sample_dao")
         exit_rules = self.settings.get("EXIT_RULES", {})
         with self.tokens_lock:
             tokens = list(self.active_trades.keys())
@@ -91,6 +95,20 @@ class OpenPositionTracker:
                 entry_usd = float(trade["entry_usd"])
                 current_price_usd = jup.get_token_price(token_mint)
                 pnl = ((current_price_usd - entry_usd) / entry_usd) * 100
+                now = time.time()
+                last_ts = self.last_price_sample.get(token_mint, 0)
+
+                if now - last_ts >= self.price_sample_interval:
+                    try:
+                        price_sample_dao.insert_sample(
+                            trade_id=trade["id"],
+                            token_id=trade["token_id"],
+                            price_usd=current_price_usd,
+                            pnl_percent=pnl,
+                        )
+                        self.last_price_sample[token_mint] = now
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Failed to insert price sample for {token_mint}: {e}")
 
                 self.tracker_logger.info({
                     "event": "track",
@@ -255,6 +273,7 @@ class OpenPositionTracker:
             token_dao = self.ctx.get("token_dao")
             sim_mode = self.settings["SIM_MODE"]
             dust_threshold_usd = self.ctx.settings["DUST_THRESHOLD_USD"]
+            config_id = self.ctx.get("config_id")
 
             if sim_mode:
                 return
@@ -313,6 +332,7 @@ class OpenPositionTracker:
                         entry_usd=entry_usd,
                         simulation=sim_mode,
                         status="RECOVERED",
+                        config_id=config_id,
                     )
                     sig_dao.insert_signature(token_id, buy_signature=unique_recovery_sig())
                     trade = trade_dao.get_trade_by_id(trade_id)

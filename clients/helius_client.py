@@ -52,13 +52,15 @@ class HeliusClient:
                     self.logger.error(f"❌ Failed to retrive balance: {e}", exc_info=True)
                     return 0
     
-    def get_token_accounts_by_owner(self, pubkey: str,mint: str = None)->dict:
+    def get_token_accounts_by_owner(self, pubkey: str, mint: str = None, program_id: str = None) -> list[dict]:
         self.token_account_by_owner["id"] = self._next_id()
         self.token_account_by_owner["params"][0] = pubkey
         if mint:
-             self.token_account_by_owner["params"][1]={"mint": mint}
+            self.token_account_by_owner["params"][1] = {"mint": mint}
         else:
-            self.token_account_by_owner["params"][1]["programId"] = str(SPL_TOKEN_PROGRAM_ID)
+            self.token_account_by_owner["params"][1] = {
+                "programId": str(program_id or SPL_TOKEN_PROGRAM_ID)
+            }
 
         try:
             self.ctx.get("helius_rl").wait()
@@ -71,8 +73,7 @@ class HeliusClient:
 
             result = self._assert_response_ok(response_json, f"get_token_accounts_by_owner {pubkey}")
             if not result:
-                return None
-
+                return []
             accounts = result.get("value", {}).get("accounts", [])
             reserves = []
 
@@ -83,12 +84,15 @@ class HeliusClient:
                     "mint": parsed_info["mint"],
                     "amount": int(ta["amount"]),
                     "decimals": int(ta["decimals"]),
-                    "pub_key":acc["pubkey"] 
+                    "pub_key": acc["pubkey"],
+                    "program_id": acc["account"].get("owner"),
                 })
+
             return reserves
+
         except Exception as e:
-                    self.logger.error(f"❌ Failed to fetch account reserves: {e}", exc_info=True)
-                    return []
+            self.logger.error(f"❌ Failed to fetch account reserves: {e}", exc_info=True)
+            return []
     
     def get_token_meta_data(self, token_address: str)->dict:
         self.logger.info(f"🔍 Fetching metadata for {token_address} using Helius...")

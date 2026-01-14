@@ -30,9 +30,11 @@ DB_HOST=db          # IMPORTANT: must be "db" for docker-compose stack
 DB_PORT=5432
 DB_USER=sniper_user
 DB_PASSWORD=super_secret_password
-
 PYTHONUNBUFFERED=1
+```
+
 ---
+
 ```env
 docker compose -f docker-compose.stack.yml up -d --build
 ```
