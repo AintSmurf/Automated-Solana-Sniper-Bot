@@ -8,12 +8,23 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Helius RPC support for `getTokenAccountsByOwnerV2` (cursor-based pagination via `paginationKey`; optional `changedSinceSlot`).
 - Token-account discovery now returns enough info to reliably burn/close dust, even in large wallets.
+- Backtesting schema extensions:
+  - `config_versions` table (settings_json + config_hash + label) with unique hash index.
+  - `price_samples` table for per-trade price snapshots (offline TP/SL/TSL replay) + `(trade_id, sample_recorded_time)` index.
+  - Optional trade links: `trades.config_id`, `trades.safety_result_id`, `trades.volume_snapshot_id`, `trades.liquidity_snapshot_id`.
 
 ### Changed
 - Updated `get_token_accounts_by_owner(...)` to use V2 response shape:
   - `result.value[]` items + `paginationKey`.
 - Parsing now returns consistent fields:
   - `mint`, `amount` (raw int), `decimals`, `pub_key` (token account), and `program_id` (Token vs Token-2022).
+- DB timestamps normalized to `TIMESTAMPTZ` for UTC-safe storage.
+- Trades now include `closed_at` to explicitly record close time.
+- Log analysis pipeline upgraded:
+  - Extractor now works from a `pairs.csv` containing `token_address,mint_signature,buy_signature,sell_signature`.
+  - Output headers include all signatures per token for faster debugging.
+- Signature verification callbacks now handle `failed` and `timeout` states explicitly for BUY/SELL.
+- SELL close behavior: on `confirmed`, the bot only closes the trade when the token is **no longer present in the wallet**.
 
 ### Fixed
 - Dust cleaner reliability:
@@ -27,9 +38,28 @@ All notable changes to this project will be documented in this file.
 - Sell reliability:
   - SELL no longer skips due to `tokens == 0` caused by incorrect / partial balance discovery.
   - Uses V2 token-account discovery and raw base-unit amount to compute the real input before quoting.
+- Standalone analyzer robustness/perf:
+  - Reads both `.log` and `.log.gz` and scans `logs/debug/`, `logs/backups/debug/`, plus `logs/info.log`.
+  - Single-pass regex matching across mint/buy/sell signatures with dedup + time-sorted output.
+- BUY fail/timeout false-positives:
+  - If a BUY returns `failed`/`timeout` but wallet shows the token above `DUST_THRESHOLD_USD`, the trade is treated as **FINALIZED**.
+- Reconciliation repairs inconsistent BUY states to `FINALIZED` when wallet confirms ownership.
+- Missing buy signatures on repaired trades are auto-filled with a unique recovery signature for consistency.
 
 
+### Notes
+#### Trade status lifecycle (REAL)
+- **SUBMITTED** → buy tx broadcast, waiting for signature verification.
+- **CONFIRMED** → RPC confirmed (not final). Still treated as open.
+- **FINALIZED** → buy is finalized / wallet ownership confirmed (the “open position” state).
+- **SELLING** → sell tx broadcast, waiting for signature verification.
+- **EXIT_REQUESTED** → manual/logic requested an exit; sell will be attempted.
+- **SELL_TIMEOUT** → sell signature check timed out; position stays open and will be handled by reconcile / later checks.
+- **RECOVERED** → token found in wallet but missing in DB; recovery trade created.
 
+#### Failure statuses (diagnostic)
+- **BUY_FAILED** / **BUY_TIMEOUT** → used when signature verification reports failed/timeout *and* token is not in wallet.
+  - If wallet shows the token (above dust threshold), bot upgrades the trade to **FINALIZED** (repaired).
 
 
 ## [4.3.6] – Jupiter API update, post_delayed_buy wiring, and stability fixes

@@ -1,17 +1,17 @@
 import argparse
-from datetime import datetime ,timedelta
+from datetime import datetime, timedelta
 import pandas as pd
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import subprocess
 import os
+
 from dao.token_dao import TokenDAO
 from services.bot_context import BotContext
 from helpers.credentials_utility import CredentialsUtility
 from config.settings import Settings
 from services.sql_db_utility import SqlDBUtility
 
+# analyze.py is now the *batch* extractor that expects: --pairs <csv>
 EXTRACTOR_SCRIPT = os.path.join(os.path.dirname(__file__), "analyze.py")
-MAX_WORKERS = 10
 
 
 def build_context():
@@ -38,7 +38,7 @@ def parse_args():
 
     parser.add_argument(
         "--reason",
-        choices=["lost", "tp", "sl", "tsl", "timeout", "manual"],
+        choices=["lost", "tp", "sl", "tsl", "timeout", "manual","fail"],
         help="Filter by trigger_reason/exit_reason",
     )
     parser.add_argument(
@@ -75,14 +75,13 @@ def get_bounds_from_args(args):
         end = start + timedelta(days=1)
         from_ts, to_ts = start, end
     elif args.since:
+        # Note: fromisoformat("YYYY-MM-DD") gives naive datetime; astimezone() makes it local
         from_ts = datetime.fromisoformat(args.since).astimezone()
-        # open-ended [from_ts, ∞)
 
     return from_ts, to_ts
 
 
 def map_reason_to_db(reason_cli: str) -> str:
-    """Map CLI reason names to DB trigger_reason/exit_reason."""
     mapping = {
         "lost": "LOST",
         "tp": "TP",
@@ -90,6 +89,7 @@ def map_reason_to_db(reason_cli: str) -> str:
         "tsl": "TSL",
         "timeout": "TIMEOUT",
         "manual": "MANUAL",
+        "fail":"FAILED",
     }
     return mapping.get(reason_cli)
 
@@ -99,20 +99,40 @@ def load_mints(args):
     dao = TokenDAO(ctx)
 
     if args.all:
-        rows = dao.fetch_mint_signature() 
+        rows = dao.fetch_mint_signatures()
     else:
         trigger_reason = map_reason_to_db(args.reason) if args.reason else None
         from_ts, to_ts = get_bounds_from_args(args)
-        rows = dao.fetch_mint_signature(
+        rows = dao.fetch_mint_signatures(
             trigger_reason=trigger_reason,
             from_ts=from_ts,
             to_ts=to_ts,
         )
 
     if not rows:
-        return pd.DataFrame(columns=["signature", "token_address"])
+        return pd.DataFrame(columns=[
+            "token_address", "mint_signature", "buy_signature", "sell_signature"
+        ])
 
-    df = pd.DataFrame(rows, columns=["signature", "token_address"])
+    df = pd.DataFrame(rows, columns=[
+        "token_address", "mint_signature", "buy_signature", "sell_signature"
+    ])
+
+    # normalize
+    df["token_address"] = df["token_address"].fillna("").astype(str)
+    for col in ("mint_signature", "buy_signature", "sell_signature"):
+        df[col] = df[col].fillna("").astype(str)
+
+    # keep only valid token rows
+    df = df[df["token_address"].str.len() > 0]
+
+    # keep rows that have at least ONE signature
+    sig_cols = ("mint_signature", "buy_signature", "sell_signature")
+    df = df[
+        (df["mint_signature"].str.lower().ne("none") & df["mint_signature"].str.len().gt(0)) |
+        (df["buy_signature"].str.lower().ne("none") & df["buy_signature"].str.len().gt(0)) |
+        (df["sell_signature"].str.lower().ne("none") & df["sell_signature"].str.len().gt(0))
+    ]
 
     if args.limit:
         df = df.head(args.limit)
@@ -120,29 +140,20 @@ def load_mints(args):
     return df
 
 
-def run_extractor(signature, token):
-    if not signature or str(signature).lower() == "none":
-        return
 
-    print(f"🚀 Extracting logs for {token} ({signature})")
+def run_batch_extractor(df: pd.DataFrame):
+    os.makedirs("logs", exist_ok=True)
+
+    pairs_csv = os.path.join("logs", "pairs.csv")
+    df.to_csv(pairs_csv, index=False)
+
+    print(f"🧠 Saved {len(df)} pairs -> {pairs_csv}")
+    print(f"🚀 Running batch extractor: {EXTRACTOR_SCRIPT}")
+
     subprocess.run(
-        ["python", EXTRACTOR_SCRIPT, "--signature", signature, "--token", token]
+        ["python", EXTRACTOR_SCRIPT, "--pairs", pairs_csv],
+        check=True,
     )
-
-
-def run_all_parallel(df: pd.DataFrame):
-    tasks = []
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        for _, row in df.iterrows():
-            signature = row["signature"]
-            token = row["token_address"]
-            tasks.append(executor.submit(run_extractor, signature, token))
-
-        for task in as_completed(tasks):
-            try:
-                task.result()
-            except Exception as e:
-                print(f"❌ Error during log extraction: {e}")
 
     print("\n✅ Mint signature extraction completed!")
 
@@ -155,7 +166,7 @@ def main():
         print("⚠️ No tokens match the filter.")
         return
 
-    run_all_parallel(df)
+    run_batch_extractor(df)
 
 
 if __name__ == "__main__":

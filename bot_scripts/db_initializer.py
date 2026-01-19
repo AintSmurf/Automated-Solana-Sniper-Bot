@@ -65,7 +65,7 @@ def create_tables():
                         id SERIAL PRIMARY KEY,
                         token_address TEXT UNIQUE NOT NULL,
                         signature TEXT,
-                        detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        detected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                     );
                     """)
 
@@ -81,10 +81,10 @@ def create_tables():
                         sell_count INT DEFAULT 0,
                         buy_ratio DOUBLE PRECISION DEFAULT 0,
                         net_flow DOUBLE PRECISION DEFAULT 0,
-                        launch_time TIMESTAMP,
+                        launch_time TIMESTAMPTZ,
                         launch_volume DOUBLE PRECISION DEFAULT 0,
                         delta_volume DOUBLE PRECISION DEFAULT 0,
-                        snapshot_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        snapshot_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                     );
                     """)
 
@@ -108,7 +108,7 @@ def create_tables():
                         volume_check BOOLEAN,
                         marketcap_check BOOLEAN,
                         score INT,
-                        checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        checked_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                     );
                     """)
 
@@ -123,10 +123,11 @@ def create_tables():
                         pnl_percent DOUBLE PRECISION,
                         trigger_reason TEXT,
                         simulation BOOLEAN,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        trade_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                         status TEXT,
-                        confirmed_at TIMESTAMP,
-                        finalized_at TIMESTAMP
+                        confirmed_at TIMESTAMPTZ,
+                        finalized_at TIMESTAMPTZ,
+                        closed_at TIMESTAMPTZ
                     );
                     """)
 
@@ -140,7 +141,7 @@ def create_tables():
                         usdt_liq DOUBLE PRECISION,
                         usd1_liq DOUBLE PRECISION,
                         total_liq DOUBLE PRECISION,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        snapshot_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                     );
                     """)
 
@@ -151,7 +152,7 @@ def create_tables():
                         token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
                         pool_address TEXT UNIQUE,
                         dex_source TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                     );
                     """)
 
@@ -162,8 +163,8 @@ def create_tables():
                         token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
                         buy_signature TEXT UNIQUE,
                         sell_signature TEXT,
-                        buy_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        sell_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        buy_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                        sell_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                     );
                     """)
 
@@ -178,7 +179,7 @@ def create_tables():
                         label TEXT,
                         settings_json JSONB NOT NULL,
                         config_hash TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                     );
                     """)
 
@@ -203,7 +204,7 @@ def create_tables():
                         id SERIAL PRIMARY KEY,
                         trade_id INT REFERENCES trades(id) ON DELETE CASCADE,
                         token_id INT REFERENCES tokens(id) ON DELETE CASCADE,
-                        timestamp TIMESTAMPTZ NOT NULL,
+                        sample_recorded_time TIMESTAMPTZ NOT NULL,
                         price_usd DOUBLE PRECISION NOT NULL,
                         pnl_percent DOUBLE PRECISION
                     );
@@ -211,8 +212,8 @@ def create_tables():
 
                     # Helpful index for replaying trades
                     cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_price_samples_trade_ts
-                    ON price_samples(trade_id, timestamp);
+                        CREATE INDEX IF NOT EXISTS idx_price_samples_trade_ts
+                        ON price_samples(trade_id, sample_recorded_time);
                     """)
 
                     conn.commit()

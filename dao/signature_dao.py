@@ -6,30 +6,34 @@ class SignatureDAO:
     def __init__(self, ctx: BotContext):
         self.sql_helper: SqlDBUtility = ctx.get("sql_db")
 
-    def insert_signature(self, token_id, buy_signature=None, sell_signature=None):
+    def upsert_buy_signature(self, token_id: int, buy_signature: str):
         current_ts = datetime.now(timezone.utc)
         sql = """
-            INSERT INTO signatures (token_id, buy_signature, sell_signature, buy_time)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id;
+            INSERT INTO signatures (token_id, buy_signature, buy_time)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (token_id)
+            DO UPDATE SET
+                buy_signature = EXCLUDED.buy_signature,
+                buy_time      = EXCLUDED.buy_time;
         """
-        params = (token_id, buy_signature, sell_signature, current_ts)
-        return self.sql_helper.execute_insert(sql, params)
+        self.sql_helper.execute_update(sql, (token_id, buy_signature, current_ts))
 
-    def update_buy_signature(self, token_id, buy_signature):
+    def upsert_sell_signature(self, token_id: int, sell_signature: str):
         current_ts = datetime.now(timezone.utc)
         sql = """
-            UPDATE signatures
-            SET buy_signature = %s, buy_time = %s
-            WHERE token_id = %s;
+            INSERT INTO signatures (token_id, sell_signature, sell_time)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (token_id)
+            DO UPDATE SET
+                sell_signature = EXCLUDED.sell_signature,
+                sell_time      = EXCLUDED.sell_time;
         """
-        self.sql_helper.execute_update(sql, (buy_signature, current_ts, token_id))
-
-    def update_sell_signature(self, token_id, sell_signature):
-        current_ts = datetime.now(timezone.utc)
-        sql = """
-            UPDATE signatures
-            SET sell_signature = %s, sell_time = %s
-            WHERE token_id = %s;
-        """
-        self.sql_helper.execute_update(sql, (sell_signature, current_ts, token_id))
+        self.sql_helper.execute_update(sql, (token_id, sell_signature, current_ts))
+    
+    def get_buy_signature(self, token_id: int) -> str | None:
+        sql = "SELECT buy_signature FROM signatures WHERE token_id = %s;"
+        rows = self.sql_helper.execute_select(sql, (token_id,))
+        if not rows:
+            return None
+        sig = rows[0].get("buy_signature")
+        return sig if sig else None

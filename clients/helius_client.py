@@ -172,7 +172,7 @@ class HeliusClient:
             self.logger.error(f"❌ Error simulating transaction: {e}")
             return False
     
-    def verify_signature(self, signature: str, max_retries: int = 30, delay: float = 3.0) -> str:
+    def verify_signature(self, signature: str, max_retries: int = 30, delay: float = 5.0) -> str:
         confirmed_count = 0
         for attempt in range(1, max_retries + 1):
             try:
@@ -203,9 +203,9 @@ class HeliusClient:
                     confirmed_count += 1
                     self.logger.info(f"🟡 Signature {signature} confirmed (count={confirmed_count})")
                     if confirmed_count >= 3:
-                        self.logger.info(f"✅ Signature {signature} consistently confirmed — treating as finalized")
+                        self.logger.info(f"✅ Signature {signature} consistently confirmed — couldnt verify it's finalized")
                         return "confirmed"
-                    time.sleep(3); continue
+                    time.sleep(delay); continue
 
                 self.logger.debug(f"⏳ Signature {signature} still {status or 'pending'} (attempt {attempt})")
                 time.sleep(delay)

@@ -19,17 +19,19 @@ class TraderManager:
         try:
             token_amount = self.ctx.get("jupiter_client").get_solana_token_worth_in_dollars(usd_amount)
             data = self.ctx.get("jupiter_client").get_quote_dict(input_mint, output_mint, token_amount)
-            quote_price = data["quote_price"]
+            if not data or "quote" not in data or "outAmount" not in data:
+                self.logger.warning(f"⚠️ Jupiter quote failed for BUY {output_mint}")
+                return None
             token_received = data["outAmount"]
+            if token_received <= 0:
+                self.logger.warning(f"⚠️ Bad outAmount for BUY {output_mint}: {token_received}")
+                return None
             quote = data["quote"]
-            real_entry_price = usd_amount / token_received
+            entry_price_usd = float(data.get("entry_usd") or 0.0)
 
             if sim:
-                return self._insert_simulated_trade(output_mint, real_entry_price, real_entry_price)
-
-            # Send transaction
-            use_sender = self.ctx.settings.get("USE_SENDER", {}).get("BUY", False)
-            
+                return self._insert_simulated_trade(output_mint, entry_price_usd, entry_price_usd)
+            use_sender = self.ctx.settings["USE_SENDER"]["BUY"]
             if use_sender:
                 txn_64 = self.ctx.get("jupiter_client").get_swap_transaction_for_sender(quote)
                 buy_signature = self.ctx.get("helius_client").send_via_sender(txn_64)
@@ -41,8 +43,9 @@ class TraderManager:
                 return None
 
             self.logger.info(f"✅ Transaction submitted — signature: {buy_signature}")
+            self.insert_submitted_buy(data,buy_signature,output_mint)
 
-            payload = {"output_mint": output_mint, "usd_amount": real_entry_price}
+            payload = {"output_mint": output_mint,"entry_price_usd": entry_price_usd,"usd_spent": usd_amount}        
             fut = run_bg(self.ctx.get("helius_client").verify_signature, buy_signature)
             fut.add_done_callback(lambda f: self._signature_status_callback(buy_signature, "buy", payload)(f))
             self.pending_futures[output_mint] = fut
@@ -105,6 +108,7 @@ class TraderManager:
             payload = {"token_mint": input_mint, "trigger_reason": trigger_reason}
             fut = run_bg(self.ctx.get("helius_client").verify_signature, sell_signature)
             fut.add_done_callback(lambda f: self._signature_status_callback(sell_signature, "sell", payload)(f))
+            self.pending_futures[input_mint] = fut
             return sell_signature
 
         except Exception as e:
@@ -114,26 +118,45 @@ class TraderManager:
     def _signature_status_callback(self, signature: str, action: str, payload: dict | None = None):
         def callback(fut):
             try:
-                status = fut.result()
-                if status in ("confirmed", "finalized"):
-                    self.logger.info(f"📊 {action.upper()} {signature} {status}")
-                    if action == "buy":
+                status = str(fut.result() or "").lower()
+                if action == "buy":
+                    if status in ("confirmed", "finalized"):
                         self._on_buy_status(signature, payload, status)
-                    elif action == "sell":
+                    elif status in ("failed", "timeout"):
+                        self._on_buy_fail_or_timeout(signature, payload, status)
+                    else:
+                        self.logger.warning(f"⚠️ BUY {signature} returned status={status}")
+                    return
+                if action == "sell":
+                    token_mint = payload["token_mint"]
+
+                    if status == "finalized":
                         self._on_sell_status(signature, payload, status)
-                else:
-                    self.logger.warning(f"⚠️ {action.upper()} {signature} returned status={status}")
+                        return
+                    if status == "confirmed":
+                        exists = self.ctx.get("wallet_client").check_if_token_exists_in_wallet(token_mint)
+                        if not exists:
+                            self._on_sell_status(signature, payload, status)
+                            return
+                        self.logger.warning(
+                            f"⚠️ SELL {signature} confirmed but token still in wallet: {token_mint} (not closing yet)"
+                        )
+                        return
+                    if status == "failed":
+                        self._on_sell_fail_or_timeout(signature, payload, status)
+                        return
+
+                    if status == "timeout":
+                        self._on_sell_fail_or_timeout(signature, payload, status)
+                        return
+                    self.logger.warning(f"⚠️ SELL {signature} returned status={status} (not closing yet)")
+                    return
             except Exception as e:
                 self.logger.error(f"❌ Callback error ({action}): {e}", exc_info=True)
         return callback
 
     def _on_buy_status(self, signature: str, payload: dict, status: str):
         output_mint = payload["output_mint"]
-        usd_amount = float(payload["usd_amount"])
-        sim = self.ctx.settings.get("SIM_MODE", False)
-        now_utc = datetime.now(timezone.utc)
-
-        token_dao = self.ctx.get("token_dao")
         trade_dao = self.ctx.get("trade_dao")
         sig_dao = self.ctx.get("signatures_dao")
         tracker = self.ctx.get("open_position_tracker")
@@ -141,31 +164,47 @@ class TraderManager:
 
 
         try:
-            for attempt in range(3):
-                if self._has_token_balance(output_mint):
-                    break
-                self.logger.debug(f"⏳ Waiting for wallet to reflect {output_mint} (attempt {attempt+1}/3)")
-                time.sleep(3)
-            else:
-                self.logger.error(f"❌ Skipping trade insert — {output_mint} never appeared in wallet after TX {signature}")
-                return
+            trade = trade_dao.get_trade_by_buy_signature(signature)
+            if not trade:
+                trade = trade_dao.get_latest_trade_by_token_and_statuses(
+                    output_mint, ("SUBMITTED", "CONFIRMED", "FINALIZED")
+                )
+                if not trade:
+                    self.logger.error(
+                        f"❌ BUY status but no trade found. output_mint={output_mint} sig={signature}"
+                    )
+                    return
+                sig_dao.upsert_buy_signature(trade["token_id"], signature)
+            status = str(status).lower()
             if status == "confirmed":
-                self.logger.info(f"🟢 {output_mint} confirmed + balance present — marking as FINALIZED")
-                status = "finalized"
+                prev = str(trade.get("status", "")).upper()
+                if prev not in ("CONFIRMED", "FINALIZED"):
+                    trade_dao.update_trade_status_with_ts(trade["id"], "CONFIRMED")
+                self.logger.info(f"🟡 BUY {signature} CONFIRMED — {output_mint} (trade_id={trade['id']})")
+                return
+            if status == "finalized":
+                prev = str(trade.get("status", "")).upper()
+                if prev != "FINALIZED":
+                    trade_dao.update_trade_status_with_ts(trade["id"], "FINALIZED")
+                    self.ctx.get("trade_counter").increment()
+                else:
+                    self.logger.debug(f"⏩ BUY already FINALIZED — {output_mint} (trade_id={trade['id']})")
 
-            token_id = token_dao.get_or_create_token(output_mint, signature)
-            trade_id = trade_dao.insert_trade(
-                token_id, "BUY", usd_amount, simulation=sim, status=status.upper(),
-                confirmed_at=now_utc if status == "confirmed" else None,
-                finalized_at=now_utc if status == "finalized" else None,config_id=config_id
-            )
-            sig_dao.insert_signature(token_id, buy_signature=signature)
-            trade_row = trade_dao.get_trade_by_id(trade_id)
-            tracker.active_trades[output_mint] = trade_row
-            self.logger.info(f"✅ Trade {output_mint} {status.upper()} + Signature saved + Tracker updated")
-            notifier = self.ctx.get("notification_manager")
-            notifier.notify_text(f"✅ **BUY FINALIZED** — `{output_mint}`\n💵 USD: {usd_amount:.8f}\n🔗 Signature: `{signature}`",self.live_channel)
-            self.ctx.get("trade_counter").increment()
+                self.logger.info(f"🟢 BUY {signature} FINALIZED — {output_mint} (trade_id={trade['id']})")
+
+                trade_row = trade_dao.get_trade_by_id(trade["id"])
+                if tracker:
+                    with tracker.tokens_lock:
+                        tracker.active_trades[output_mint] = trade_row
+                self.pending_futures.pop(output_mint, None)
+                notifier = self.ctx.get("notification_manager")
+                notifier.notify_text(
+                    f"✅ **BUY FINALIZED** — `{output_mint}`\n🔗 Signature: `{signature}`",
+                    self.live_channel,
+                )
+                return
+
+            self.logger.warning(f"⚠️ BUY {signature} returned unexpected status={status}")
 
         except Exception as e:
             self.logger.error(f"❌ _on_buy_status error: {e}", exc_info=True)
@@ -186,9 +225,15 @@ class TraderManager:
                 return
 
             entry_usd = float(trade.get("entry_usd", 0))
-            current_price_usd = jup.get_token_price(token_mint)
-            pnl_percent = ((current_price_usd - entry_usd) / entry_usd) * 100 if entry_usd else 0
-
+            current_price_usd = jup.get_token_price(token_mint)            
+            if current_price_usd is None or current_price_usd <= 0:
+                self.logger.warning(f"⚠️ Missing exit price for {token_mint}. Not closing trade yet.")
+                try:
+                    sig_dao.upsert_sell_signature(trade["token_id"], signature)
+                except Exception:
+                    pass
+                return 
+            pnl_percent = ((current_price_usd - entry_usd) / entry_usd) * 100 if entry_usd else 0 
             trade_dao.close_trade(
                 trade_id=trade["id"],
                 exit_usd=current_price_usd,
@@ -197,12 +242,12 @@ class TraderManager:
             )
 
             token_id = trade["token_id"]
-            sig_dao.update_sell_signature(token_id, signature)
+            sig_dao.upsert_sell_signature(token_id, signature)
 
             self.logger.info(
                 f"💰 Trade closed for {token_mint} ({reason}) — PnL: {pnl_percent:.8f}% | Exit USD: {current_price_usd:.8f}"
             )
-            
+            self.pending_futures.pop(token_mint, None)     
             notifier = self.ctx.get("notification_manager")
             notifier.notify_text(f"💰 **SELL EXECUTED** — `{token_mint}`\n📈 PnL: {pnl_percent:.8f}%\n💵 Exit USD: {current_price_usd:.8f}\n⚙️ Reason: {reason}",self.live_channel)
             self.tracker_logger.info({
@@ -242,7 +287,7 @@ class TraderManager:
             finalized_at=now_utc,
             config_id=config_id
         )
-        sig_dao.insert_signature(token_id, buy_signature=f"SIMULATED_BUY_{get_formatted_date_str()}", sell_signature=None)
+        sig_dao.upsert_buy_signature(token_id, f"SIMULATED_BUY_{get_formatted_date_str()}")
 
         trade_row = trade_dao.get_trade_by_id(trade_id)
         tracker.active_trades[output_mint] = trade_row
@@ -268,3 +313,96 @@ class TraderManager:
 
     def has_pending_trades(self) -> bool:
         return any(not f.done() for f in self.pending_futures.values())
+
+    def insert_submitted_buy(self, data: dict, buy_signature: str, output_mint: str):
+        token_dao = self.ctx.get("token_dao")
+        trade_dao = self.ctx.get("trade_dao")
+        sig_dao = self.ctx.get("signatures_dao")
+        config_id = self.ctx.get("config_id")
+        existing = trade_dao.get_latest_trade_by_token_and_statuses(
+            output_mint,  ("SUBMITTED", "CONFIRMED", "FINALIZED")
+        )
+        if existing:
+            self.logger.debug(
+                f"⏩ Existing open-ish trade for {output_mint} (trade_id={existing['id']}, status={existing.get('status')})"
+            )
+            sig_dao.upsert_buy_signature(existing["token_id"], buy_signature)
+            return existing["id"]
+        token_id = token_dao.get_or_create_token(output_mint, None)
+        entry_usd = float(data.get("entry_usd") or 0.0)
+        if entry_usd <= 0:
+            try:
+                entry_usd = float(self.ctx.get("jupiter_client").get_token_price(output_mint) or 0.0)
+            except Exception:
+                entry_usd = 0.0
+
+        trade_id = trade_dao.insert_trade(
+            token_id=token_id,
+            trade_type="BUY",
+            entry_usd=entry_usd,
+            simulation=False,
+            status="SUBMITTED",
+            confirmed_at=None,
+            finalized_at=None,
+            config_id=config_id,
+        )
+        sig_dao.upsert_buy_signature(token_id, buy_signature)
+
+        self.logger.info(f"🧾 Trade SUBMITTED saved — trade_id={trade_id} token={output_mint}")
+        return trade_id
+    
+    def _on_sell_fail_or_timeout(self, signature: str, payload: dict, status: str):
+        token_mint = payload.get("token_mint")
+        reason = payload.get("trigger_reason")
+        trade_dao = self.ctx.get("trade_dao")
+        sig_dao = self.ctx.get("signatures_dao")
+        tracker = self.ctx.get("open_position_tracker")
+        try:
+            trade = trade_dao.get_trade_by_token(token_mint)
+            if not trade:
+                self.logger.warning(f"SELL {status} but no open trade found for {token_mint}")
+                return
+            try:
+                sig_dao.upsert_sell_signature(trade["token_id"], signature)
+            except Exception:
+                pass
+            if status == "failed":
+                trade_dao.update_trade_status(trade["id"], "FINALIZED") 
+                self.logger.error(f"❌ SELL failed for {token_mint} (sig={signature}) — reverted status back to FINALIZED. reason={reason}")
+                if tracker and token_mint in tracker.active_trades:
+                    tracker.active_trades[token_mint]["status"] = "FINALIZED"
+                    return
+            if status == "timeout":
+                try:
+                    trade_dao.update_trade_status(trade["id"], "SELL_TIMEOUT")
+                    self.logger.warning(f"⏱SELL timeout for {token_mint} (sig={signature}) — marked SELL_TIMEOUT")
+                except Exception:
+                    self.logger.warning(f"⏱SELL timeout for {token_mint} (sig={signature}) — leaving status as-is (likely SELLING)")
+                return
+        except Exception as e:
+            self.logger.error(f"❌ _on_sell_fail_or_timeout error: {e}", exc_info=True)
+    
+    def _on_buy_fail_or_timeout(self, signature: str, payload: dict, status: str):
+        output_mint = payload.get("output_mint")
+        trade_dao = self.ctx.get("trade_dao")
+
+        trade = trade_dao.get_trade_by_buy_signature(signature)
+        if not trade and output_mint:
+            trade = trade_dao.get_latest_trade_by_token_and_statuses(output_mint, ("SUBMITTED", "CONFIRMED"))
+        if not trade:
+            return
+        try:
+            exists = self.ctx.get("wallet_client").check_if_token_exists_in_wallet(output_mint)
+        except Exception:
+            exists = False
+
+        if exists:
+            trade_dao.update_trade_status_with_ts(trade["id"], "FINALIZED")
+            self.logger.warning(f"🩹 BUY {status} but wallet HAS token -> treating as FINALIZED: {output_mint}")
+            return
+        if status == "failed":
+            trade_dao.update_trade_status(trade["id"], "BUY_FAILED")
+        else:
+            trade_dao.update_trade_status(trade["id"], "BUY_TIMEOUT")
+        self.pending_futures.pop(output_mint, None)
+

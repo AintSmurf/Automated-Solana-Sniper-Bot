@@ -11,16 +11,19 @@ The system has evolved from CSV-based simulation to full **SQL persistence**, en
 
 ---
 ### Latest (v4.3.7)
-- Added Helius `getTokenAccountsByOwnerV2` support (cursor pagination + scalable wallet portfolio queries).
-- Updated wallet token-account discovery to reliably fetch the correct ATA for a given mint (used by Dust Cleaner and other flows).
+- Added Helius `getTokenAccountsByOwnerV2` support (cursor pagination via `paginationKey`).
+- Wallet token-account discovery now returns reliable ATA + program info (Token vs Token-2022), improving large-wallet handling.
 - Improved Dust Cleaner reliability:
-  - Uses correct mint→token-account lookup before burn/close.
-  - Better logging around blockhash + send_transaction simulation results.
-  - Prevents accidental cleanup of known base tokens (SOL/USDC/USDT/etc).
+  - Correct mint → token account (ATA) selection (largest amount > 0).
+  - Uses correct token program to avoid `InvalidAccountData`.
+  - Logs “Burned & closed” only when a real signature is returned.
+- Trade reliability improvements:
+  - BUY fail/timeout false-positives are repaired when wallet confirms ownership (above `DUST_THRESHOLD_USD`).
+  - SELL closes on confirmation only when the token is no longer present in the wallet.
+- Log analysis pipeline upgraded:
+  - Batch extractor uses `pairs.csv` with `token_address,mint_signature,buy_signature,sell_signature`.
+  - Scans `.log` and `.log.gz` across debug + backups + info log with dedup + time-sorted output.
 
-Docs:
-- Configuration: `docs/CONFIGURATION.md`
-- Changelog: `CHANGELOG.md`
 
 ## Features
 

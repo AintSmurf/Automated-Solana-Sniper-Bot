@@ -56,46 +56,60 @@ class TokenDAO:
         res = self.sql_helper.execute_select(sql)
         return res if res else None
     
-    def fetch_mint_signature(
-            self,
-            trigger_reason: Optional[str] = None,
-            from_ts: Optional[datetime] = None,
-            to_ts: Optional[datetime] = None,
-        ):
-            if trigger_reason is None and from_ts is None and to_ts is None:
-                sql = '''
-                    SELECT signature, token_address
-                    FROM tokens
-                '''
-                res = self.sql_helper.execute_select(sql)
-                return res if res else None
-            sql = '''
-                SELECT DISTINCT
-                    t.signature,
-                    t.token_address
+    def fetch_mint_signatures(
+        self,
+        trigger_reason: Optional[str] = None,
+        from_ts: Optional[datetime] = None,
+        to_ts: Optional[datetime] = None,
+    ):
+        if trigger_reason is None and from_ts is None and to_ts is None:
+            sql = """
+                SELECT
+                t.token_address,
+                t.signature        AS mint_signature,
+                sg.buy_signature   AS buy_signature,
+                sg.sell_signature  AS sell_signature
                 FROM tokens t
-                INNER JOIN trades s ON t.id = s.token_id
-                WHERE 1=1
-            '''
-            params = []
-
-            if trigger_reason is not None:
-                sql += " AND s.trigger_reason = %s"
-                params.append(trigger_reason)
-
-            if from_ts is not None:
-                sql += " AND s.\"timestamp\" >= %s"
-                params.append(from_ts)
-
-            if to_ts is not None:
-                sql += " AND s.\"timestamp\" < %s"
-                params.append(to_ts)
-
-            sql += " ORDER BY t.token_address"
-
-            res = self.sql_helper.execute_select(sql, tuple(params))
+                LEFT JOIN signatures sg ON sg.token_id = t.id
+                ORDER BY t.id DESC
+            """
+            res = self.sql_helper.execute_select(sql)
             return res if res else None
-    
+        sql = """
+            SELECT
+            t.token_address,
+            t.signature        AS mint_signature,
+            sg.buy_signature   AS buy_signature,
+            sg.sell_signature  AS sell_signature
+            FROM tokens t
+            JOIN (
+            SELECT token_id, MAX("timestamp") AS last_trade_ts
+            FROM trades
+            WHERE 1=1
+        """
+        params = []
+
+        if trigger_reason is not None:
+            sql += " AND trigger_reason = %s"
+            params.append(trigger_reason)
+
+        if from_ts is not None:
+            sql += ' AND "timestamp" >= %s'
+            params.append(from_ts)
+
+        if to_ts is not None:
+            sql += ' AND "timestamp" < %s'
+            params.append(to_ts)
+
+        sql += """
+            GROUP BY token_id
+            ) lt ON lt.token_id = t.id
+            LEFT JOIN signatures sg ON sg.token_id = t.id
+            ORDER BY lt.last_trade_ts DESC, t.id DESC
+        """
+        res = self.sql_helper.execute_select(sql, tuple(params))
+        return res if res else None
+
     def _base_trades_cte(
         self,
         since_ts: str | None = None,

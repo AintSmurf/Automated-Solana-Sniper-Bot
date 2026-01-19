@@ -28,7 +28,7 @@ class JupiterClient:
         try:
             self.ctx.get("jupiter_rl").wait()            
             slippage_value = slippage_override if slippage_override is not None else self.ctx.settings["SLPG"]
-            slippage_bps = int(slippage_value) * 100
+            slippage_bps = int(float(slippage_value) * 100)
             quote_url = f"{JUPITER_STATION['QUOTE_ENDPOINT']}?inputMint={input_mint}&outputMint={output_mint}&amount={token_amount}&slippageBps={slippage_bps}&restrictIntermediateTokens=true"
             quote_response = self.jupiter_requests.get(quote_url)
             if "error" in quote_response:
@@ -38,10 +38,14 @@ class JupiterClient:
             self.logger.info(f"Jupiter Quote for{output_mint}: In = {quote_response['inAmount']}, Out = {quote_response['outAmount']}")
             token_in = lamports_to_decimal(quote_response['inAmount'],self.ctx.get("helius_client").get_token_decimals(input_mint))
             token_out = lamports_to_decimal(quote_response['outAmount'],self.ctx.get("helius_client").get_token_decimals(output_mint))
-            return {"quote_price":token_out/token_in,"inAmount":token_in,"outAmount":token_out,"quote":quote_response}
-
+            quote_price = (token_out / token_in) if token_in else 0.0
+            input_usd = self.get_token_price(input_mint)
+            entry_usd = 0.0
+            if input_usd and token_in > 0 and token_out > 0:
+                entry_usd = (token_in / token_out) * float(input_usd) 
+            return {"quote_price":quote_price,"inAmount":token_in,"outAmount":token_out,"quote":quote_response,"entry_usd": entry_usd}
         except Exception as e:
-            self.logger.error(f"❌ Error retrieving quote: {e}")
+            self.logger.error(f"❌ Error retrieving quote: {e}", exc_info=True)
             return {}
     
     def get_solana_token_worth_in_dollars(self, usd_amount: int) -> float:
@@ -217,3 +221,4 @@ class JupiterClient:
         except Exception as e:
             self.logger.error(f"❌ Error getting swap response: {e}", exc_info=True)
             return None
+    

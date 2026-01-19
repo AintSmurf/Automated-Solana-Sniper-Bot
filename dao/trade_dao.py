@@ -26,7 +26,7 @@ class TradeDAO:
                 tr.trade_type,
                 tr.simulation,
                 tr.status,
-                tr.timestamp         AS entry_time,
+                tr.trade_time         AS entry_time,
                 tr.config_id,
                 COALESCE(sr.score, 0) AS safety_score,
                 ts.market_cap
@@ -37,12 +37,12 @@ class TradeDAO:
             WHERE tr.config_id = %s
             AND tr.simulation = %s
             AND tr.trade_type = 'BUY'
-            AND tr.timestamp >= %s
-            AND tr.timestamp < %s
-            ORDER BY tr.timestamp;
+            AND tr.trade_time >= %s
+            AND tr.trade_time < %s
+            ORDER BY tr.trade_time;
         """
         return self.sql_helper.execute_select(sql, (config_id, simulation, start_ts, end_ts))
-
+    
     def insert_trade(
             self,
             token_id,
@@ -67,7 +67,7 @@ class TradeDAO:
                     status,
                     confirmed_at,
                     finalized_at,
-                    timestamp,
+                    trade_time,
                     config_id,
                     safety_result_id,
                     volume_snapshot_id
@@ -90,9 +90,18 @@ class TradeDAO:
             )
             return self.sql_helper.execute_insert(sql, params)
 
-    def get_trade_by_signature(self, signature: str):
-        sql = "SELECT * FROM trades WHERE signature = %s;"
-        rows = self.sql_helper.execute_select(sql, (signature,))
+    def get_trade_by_buy_signature(self, buy_signature: str):
+        sql = """
+            SELECT t.*, tok.token_address
+            FROM signatures s
+            JOIN trades t ON t.token_id = s.token_id
+            JOIN tokens tok ON tok.id = t.token_id
+            WHERE s.buy_signature = %s
+            AND t.status IN ('SUBMITTED','CONFIRMED','FINALIZED','SELLING')
+            ORDER BY t.trade_time DESC
+            LIMIT 1;
+        """
+        rows = self.sql_helper.execute_select(sql, (buy_signature,))
         return rows[0] if rows else None
 
     def get_trade_by_token(self, token_mint: str):
@@ -101,28 +110,12 @@ class TradeDAO:
             FROM trades t
             JOIN tokens tok ON tok.id = t.token_id
             WHERE tok.token_address = %s
-            ORDER BY t.timestamp DESC
+            AND t.status <> 'CLOSED'
+            ORDER BY t.trade_time DESC
             LIMIT 1;
         """
         rows = self.sql_helper.execute_select(sql, (token_mint,))
         return rows[0] if rows else None
-
-    def get_open_trades(self, sim_mode: bool = False):
-        sql = """
-            SELECT 
-                t.id,
-                t.token_id,
-                tok.token_address,
-                t.trade_type,
-                t.entry_usd,
-                t.timestamp,
-                t.simulation
-            FROM trades t
-            JOIN tokens tok ON t.token_id = tok.id
-            WHERE t.status IN ('FINALIZED', 'SELLING', 'SIMULATED', 'RECOVERED')
-            AND t.simulation = %s;
-        """
-        return self.sql_helper.execute_select(sql, (sim_mode,))
 
     def update_trade_status(self, trade_id: int, status: str):
         sql = """
@@ -148,30 +141,122 @@ class TradeDAO:
                 pnl_percent = %s,
                 trigger_reason = %s,
                 status = 'CLOSED',
-                finalized_at = NOW() AT TIME ZONE 'UTC'
-            WHERE id = %s;
+                closed_at = NOW() AT TIME ZONE 'UTC'
+            WHERE id = %s
+            AND status <> 'CLOSED';
         """
         return self.sql_helper.execute_update(sql, (exit_usd, pnl_percent, trigger_reason, trade_id))
-
+    
     def get_trade_by_id(self, trade_id: int):
         sql = "SELECT * FROM trades WHERE id = %s"
         rows = self.sql_helper.execute_select(sql, (trade_id,))
         return rows[0] if rows else None
     
-    def get_live_trades(self, sim_mode: bool = False):
-        sql = """
+    def update_trade_status_with_ts(self, trade_id: int, status: str):
+        now_utc = datetime.now(timezone.utc)
+
+        if status.upper() == "CONFIRMED":
+            sql = "UPDATE trades SET status=%s, confirmed_at=%s WHERE id=%s;"
+            self.sql_helper.execute_update(sql, ("CONFIRMED", now_utc, trade_id))
+            return
+
+        if status.upper() == "FINALIZED":
+            sql = "UPDATE trades SET status=%s, finalized_at=%s WHERE id=%s;"
+            self.sql_helper.execute_update(sql, ("FINALIZED", now_utc, trade_id))
+            return
+
+        sql = "UPDATE trades SET status=%s WHERE id=%s;"
+        self.sql_helper.execute_update(sql, (status.upper(), trade_id))
+    
+    def get_latest_trade_by_token_and_statuses(self, token_mint: str, statuses: tuple[str, ...]):
+        placeholders = ",".join(["%s"] * len(statuses))
+        sql = f"""
+            SELECT t.*
+            FROM trades t
+            JOIN tokens tok ON tok.id = t.token_id
+            WHERE tok.token_address = %s
+            AND t.status IN ({placeholders})
+            ORDER BY t.trade_time DESC
+            LIMIT 1;
+        """
+        rows = self.sql_helper.execute_select(sql, (token_mint, *statuses))
+        return rows[0] if rows else None
+    
+    def get_submitted_trades(self,sim_mode: bool):
+       sql = """
+           SELECT 
+               t.id,
+               t.token_id,
+               tok.token_address,
+               t.trade_type,
+               t.entry_usd,
+               t.trade_time,
+               t.simulation,
+               t.status
+           FROM trades t
+           JOIN tokens tok ON t.token_id = tok.id
+           WHERE t.simulation = %s
+           AND t.status IN ('SUBMITTED','CONFIRMED');
+       """
+       return self.sql_helper.execute_select(sql, (sim_mode,))
+    
+    def get_live_trades(self,sim_mode: bool):
+            sql = """
             SELECT 
                 t.id,
                 t.token_id,
                 tok.token_address,
                 t.trade_type,
                 t.entry_usd,
-                t.timestamp,
+                t.trade_time,
                 t.simulation,
                 t.status
             FROM trades t
             JOIN tokens tok ON t.token_id = tok.id
-            WHERE t.status IN ('FINALIZED', 'SELLING', 'SIMULATED')
-            AND t.simulation = %s;
+            WHERE t.simulation = %s
+            AND t.status IN ('FINALIZED','RECOVERED','SIMULATED','EXIT_REQUESTED');
+            """
+            return self.sql_helper.execute_select(sql, (sim_mode,))
+    
+    def get_selling_trades(self,sim_mode: bool):
+            sql = """
+            SELECT 
+                t.id,
+                t.token_id,
+                tok.token_address,
+                t.trade_type,
+                t.entry_usd,
+                t.trade_time,
+                t.simulation,
+                t.status
+            FROM trades t
+            JOIN tokens tok ON t.token_id = tok.id
+            WHERE t.simulation = %s
+            AND t.status IN ('SELLING');
+            """
+            return self.sql_helper.execute_select(sql, (sim_mode,))
+    
+    def get_latest_trade_by_token_any_status(self, token_mint: str):
+        sql = """
+            SELECT t.*, tok.token_address
+            FROM trades t
+            JOIN tokens tok ON tok.id = t.token_id
+            WHERE tok.token_address = %s
+            ORDER BY t.trade_time DESC
+            LIMIT 1;
         """
-        return self.sql_helper.execute_select(sql, (sim_mode,))
+        rows = self.sql_helper.execute_select(sql, (token_mint,))
+        return rows[0] if rows else None
+
+    def reopen_trade(self, trade_id: int, status: str = "FINALIZED"):
+        sql = """
+            UPDATE trades
+            SET status=%s,
+                exit_usd=NULL,
+                pnl_percent=NULL,
+                trigger_reason=NULL,
+                finalized_at=NOW() AT TIME ZONE 'UTC'
+            WHERE id=%s;
+        """
+        self.sql_helper.execute_update(sql, (status, trade_id))
+

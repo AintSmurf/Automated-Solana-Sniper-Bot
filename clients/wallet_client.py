@@ -7,7 +7,7 @@ from solders.pubkey import Pubkey
 from config.dex_detection_rules import KNOWN_TOKENS,PROGRAMS
 from spl.token.instructions import burn, BurnParams,close_account, CloseAccountParams
 from solders.message import MessageV0
-from spl.token.constants import TOKEN_PROGRAM_ID
+from spl.token.constants import TOKEN_PROGRAM_ID,TOKEN_2022_PROGRAM_ID
 from solders.transaction import VersionedTransaction
 from solders.hash import Hash
 
@@ -97,8 +97,8 @@ class WalletClient:
             owner = self.get_public_key()
             helius = self.ctx.get("helius_client")
 
-            a1 = helius.get_token_accounts_by_owner(owner, program_id=PROGRAMS["SPL_TOKEN_PROGRAM_ID"])
-            a2 = helius.get_token_accounts_by_owner(owner, program_id=PROGRAMS["TOKEN_2022_PROGRAM_ID"])
+            a1 = helius.get_token_accounts_by_owner(owner, program_id=TOKEN_PROGRAM_ID)
+            a2 = helius.get_token_accounts_by_owner(owner, program_id=TOKEN_2022_PROGRAM_ID)
 
             token_balances = calculate_tokens(a1 + a2)
             return [b for b in token_balances if float(b.get("balance", 0) or 0) > 0]
@@ -205,5 +205,16 @@ class WalletClient:
             self.logger.warning(f"⚠️ Dust cleanup failed: {e}", exc_info=True)
             return closed_tokens
 
-
- 
+    def check_if_token_exists_in_wallet(self,token_address):
+        wallet_balances = self.get_token_balances()
+        dust_threshold_usd = self.ctx.settings["DUST_THRESHOLD_USD"]
+        for b in wallet_balances:
+            token_mint = b["token_mint"]
+            balance = float(b["balance"])
+            if token_mint == token_address:
+                token_price = self.ctx.get("jupiter_client").get_token_worth_in_usd(token_mint,balance)
+                if token_price > dust_threshold_usd:
+                    return True
+            else:
+                continue
+        return False

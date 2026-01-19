@@ -1,5 +1,5 @@
 {
-  "AUTO_ANALYZE_TOKENS": true,   
+  "AUTO_ANALYZE_TOKENS": false,   
   "AUTO_GZIP": true,              
   "AUTO_DELETE": false,           
   "RETENTION_DAYS": -9999,            

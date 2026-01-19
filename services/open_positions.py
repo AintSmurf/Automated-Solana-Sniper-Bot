@@ -25,7 +25,7 @@ class OpenPositionTracker:
         self.peak_price_dict = {}
         self.buy_timestamp = {}
         self.sync_interval = 30 
-        self.reconcile_interval = 120 
+        self.reconcile_interval = 45
         self.last_reconcile = 0
         self.last_sync = 0
 
@@ -66,7 +66,7 @@ class OpenPositionTracker:
     def _sync_from_db(self):
         try:
             sim_mode = self.settings["SIM_MODE"]
-            open_trades = self.trade_dao.get_open_trades(sim_mode)
+            open_trades = self.trade_dao.get_live_trades(sim_mode)
             with self.tokens_lock:
                 self.active_trades = {t["token_address"]: t for t in open_trades}
             self.logger.debug(f"🔄 Synced {len(open_trades)} {'SIMULATED' if sim_mode else 'REAL'} trades from DB.")
@@ -85,7 +85,6 @@ class OpenPositionTracker:
             trade = self.active_trades.get(token_mint)
             if not trade:
                 continue
-
             try:
                 if token_mint == self.base_token or token_mint == "SOL":
                     continue
@@ -120,7 +119,12 @@ class OpenPositionTracker:
                     "token_image":token_image,
                     "token_name":token_name
                 })
-
+                
+                status = str(trade.get("status","")).upper()
+                if status == "EXIT_REQUESTED":
+                    self._handle_exit(token_mint, trade, current_price_usd, pnl, trigger=trade.get("trigger_reason") or "MANUAL")
+                    continue
+                
                 for rule, func in self.exit_checks.items():
                     if exit_rules.get(rule, False):
                         result = func(token_mint, entry_usd, current_price_usd, trade)
@@ -139,7 +143,7 @@ class OpenPositionTracker:
         sim_mode = self.settings["SIM_MODE"]
         if sim_mode:
             sim_sig = f"SIMULATED_SELL_{get_formatted_date_str()}"
-            sig_dao.update_sell_signature(trade["token_id"], sim_sig)
+            sig_dao.upsert_sell_signature(trade["token_id"], sim_sig)
             trade_dao.close_trade(
                 trade_id=trade["id"],
                 exit_usd=current_price_usd,
@@ -183,19 +187,22 @@ class OpenPositionTracker:
             if not trade:
                 self.logger.warning(f"⚠️ Tried to manually close {token_mint}, but it's not active.")
                 return False
+            trade_dao = self.ctx.get("trade_dao")
+            sig_dao = self.ctx.get("signatures_dao")
+            sim_mode = self.settings["SIM_MODE"]
             entry_usd = float(trade.get("entry_usd", 0) or 0)
             jup = self.ctx.get("jupiter_client")
 
             current_price_usd = jup.get_token_price(token_mint)
-            pnl = ((current_price_usd - entry_usd) / entry_usd) * 100 if entry_usd else 0.0
+            
+            pnl = 0.0
+            if current_price_usd is not None and current_price_usd > 0 and entry_usd:
+                pnl = ((current_price_usd - entry_usd) / entry_usd) * 100
 
-            trade_dao = self.ctx.get("trade_dao")
-            sig_dao = self.ctx.get("signatures_dao")
-            sim_mode = self.settings["SIM_MODE"]
             if sim_mode:
                 sim_sig = f"SIMULATED_MANUAL_{get_formatted_date_str()}"
                 try:
-                    sig_dao.update_sell_signature(trade["token_id"], sim_sig)
+                    sig_dao.upsert_sell_signature(trade["token_id"], sim_sig)
                 except Exception as e:
                     self.logger.warning(
                         f"⚠️ Failed to update simulated manual sell signature for {token_mint}: {e}"
@@ -207,43 +214,18 @@ class OpenPositionTracker:
                     pnl_percent=pnl,
                     trigger_reason=trigger,
                 )
-                self.logger.info(
-                    f"🧪 Manual simulated closure for {token_mint} — "
-                    f"PnL: {pnl:.2f}% | Exit USD: {current_price_usd:.6f}"
-                )
-            else:
-                sig = self.trader.sell(token_mint, self.base_token, trigger_reason=trigger)
-
-                if not sig:
-                    self.logger.warning(
-                        f"⚠️ Manual real SELL failed for {token_mint}, keeping trade open."
-                    )
-                    return False
-
-                sig_dao.update_sell_signature(trade["token_id"], sig)
-                trade_dao.close_trade(
-                    trade_id=trade["id"],
-                    exit_usd=current_price_usd,
-                    pnl_percent=pnl,
-                    trigger_reason=trigger,
-                )
-                self.logger.info(
-                    f"✅ Manual real closure for {token_mint} — TX: {sig} | "
-                    f"PnL: {pnl:.2f}% | Exit USD: {current_price_usd:.6f}"
-                )
-            with self.tokens_lock:
-                self.active_trades.pop(token_mint, None)
-
-            self.tracker_logger.info({
-                "event": "sell",
-                "token_mint": token_mint,
-                "trigger": trigger,
-                "pnl": pnl,
-                "exit_usd": current_price_usd,
-                "simulated": True,
-            })
-            return True
-
+                self.logger.info(f"🧪 Manual simulated closure for {token_mint} — "f"PnL: {pnl:.2f}% | Exit USD: {current_price_usd:.6f}" )
+                return True
+            try:
+                trade_dao.update_trade_status(trade["id"], "EXIT_REQUESTED")
+                trade_dao.update_exit_data(trade["id"], trigger)
+                with self.tokens_lock:
+                    if token_mint in self.active_trades:
+                        self.active_trades[token_mint]["status"] = "EXIT_REQUESTED"
+                        self.active_trades[token_mint]["trigger_reason"] = trigger
+                return True
+            except Exception as e:
+                self.logger.warning(f"⚠️ Failed to mark SELLING/trigger for {token_mint}: {e}")
         except Exception as e:
             self.logger.error(f"❌ Manual close failed for {token_mint}: {e}", exc_info=True)
             return False
@@ -256,14 +238,14 @@ class OpenPositionTracker:
             with self.tokens_lock:
                 for trade in self.active_trades.values():
                     status = str(trade.get("status"))
-                    if status in ("FINALIZED", "SELLING", "SIMULATED"):
+                    if status in ("SUBMITTED","CONFIRMED","FINALIZED","SELLING","SELL_TIMEOUT","SIMULATED","RECOVERED","EXIT_REQUESTED"):
                         return True
             live_trades = self.trade_dao.get_live_trades(self.settings["SIM_MODE"])
             return len(live_trades) > 0
 
         except Exception as e:
             self.logger.error(f"⚠️ has_open_positions failed: {e}", exc_info=True)
-            return False
+        return False
 
     def _reconcile_wallet_with_db(self):
         try:
@@ -271,6 +253,7 @@ class OpenPositionTracker:
             trade_dao = self.ctx.get("trade_dao")
             sig_dao = self.ctx.get("signatures_dao")
             token_dao = self.ctx.get("token_dao")
+
             sim_mode = self.settings["SIM_MODE"]
             dust_threshold_usd = self.ctx.settings["DUST_THRESHOLD_USD"]
             config_id = self.ctx.get("config_id")
@@ -280,12 +263,9 @@ class OpenPositionTracker:
 
             IGNORED_MINTS = set(KNOWN_TOKENS.values())
             self.logger.debug(f"Ignoring known base tokens: {', '.join(KNOWN_TOKENS.keys())}")
-            with self.tokens_lock:
-                active_trades = dict(self.active_trades)
             wallet_balances = wallet.get_token_balances()
             wallet_tokens: dict[str, float] = {}
             price_cache: dict[str, float] = {}
-
             for b in wallet_balances:
                 token_mint = b["token_mint"]
                 balance = float(b["balance"])
@@ -295,37 +275,93 @@ class OpenPositionTracker:
 
                 if token_mint not in price_cache:
                     try:
-                        price_cache[token_mint] = self.ctx.get("jupiter_client").get_token_price(token_mint)
+                        price_cache[token_mint] = self.ctx.get("jupiter_client").get_token_price(token_mint) or 0.0
                     except Exception as e:
                         self.logger.warning(f"Failed to fetch price for {token_mint}: {e}")
                         price_cache[token_mint] = 0.0
 
-                usd_price = price_cache[token_mint]
+                usd_price = float(price_cache[token_mint] or 0.0)
                 usd_value = balance * usd_price
+
                 if usd_value < dust_threshold_usd:
-                    self.logger.info(
-                        f"Ignoring dust token {token_mint} — {balance:.8f} worth ${usd_value:.6f}"
-                    )
                     continue
 
                 wallet_tokens[token_mint] = balance
-            open_trades = trade_dao.get_open_trades(sim_mode)
-            db_tokens = {t["token_address"]: t for t in open_trades}
-            for token_mint, bal in wallet_tokens.items():
-                if token_mint in active_trades:
-                    self.logger.debug(f"⏩ Token {token_mint} already active, skipping recovery.")
-                    continue
 
-                if bal > 0 and token_mint not in db_tokens:
+            submitted = trade_dao.get_submitted_trades(sim_mode)
+            live = trade_dao.get_live_trades(sim_mode)
+            try:
+                selling = trade_dao.get_selling_trades(sim_mode)
+            except Exception:
+                selling = []
+
+            open_trades = submitted + live + selling
+
+            db_tokens: dict[str, dict] = {}
+            for t in open_trades:
+                addr = t.get("token_address")
+                if addr and addr not in db_tokens:
+                    db_tokens[addr] = t
+            for token_mint, bal in wallet_tokens.items():
+                if token_mint in IGNORED_MINTS:
+                    continue
+                if token_mint in db_tokens:
+                    db_trade = db_tokens[token_mint]
+                    status = str(db_trade.get("status", "")).upper()
+
+                    with self.tokens_lock:
+                        self.active_trades[token_mint] = db_trade
+                    if status in ("SUBMITTED", "CONFIRMED", "BUY_FAILED", "BUY_TIMEOUT"):
+                        try:
+                            trade_dao.update_trade_status_with_ts(db_trade["id"], "FINALIZED")
+                            with self.tokens_lock:
+                                if token_mint in self.active_trades:
+                                    self.active_trades[token_mint]["status"] = "FINALIZED"
+                                    try:
+                                        self.ctx.get("trade_counter").increment()
+                                    except Exception:
+                                        pass
+                            self.logger.warning(f"🩹 Reconcile repaired {status} -> FINALIZED via WALLET for {token_mint}")
+                        except Exception as e:
+                            self.logger.warning(f"⚠️ Failed to repair status -> FINALIZED for {token_mint}: {e}")
+                        try:
+                            buy_sig = sig_dao.get_buy_signature(db_trade["token_id"])
+                            if not buy_sig:
+                                sig_dao.upsert_buy_signature(db_trade["token_id"], unique_recovery_sig())
+                        except Exception:
+                            pass
+                    continue
+                if bal > 0:
+                    latest = trade_dao.get_latest_trade_by_token_any_status(token_mint)
+                    if latest:
+                        latest_status = str(latest.get("status", "")).upper()
+                        latest_reason = str(latest.get("trigger_reason", "")).upper()
+
+                        if latest_status == "CLOSED" and latest_reason == "WALLET_MISSING":
+                            closed_at = latest.get("closed_at")
+                            if isinstance(closed_at, datetime) and closed_at.tzinfo is None:
+                                closed_at = closed_at.replace(tzinfo=timezone.utc)
+
+                            if closed_at and (datetime.now(timezone.utc) - closed_at).total_seconds() < 300:
+                                trade_dao.reopen_trade(latest["id"], status="FINALIZED")
+                                revived = trade_dao.get_trade_by_id(latest["id"])
+
+                                with self.tokens_lock:
+                                    self.active_trades[token_mint] = revived
+
+                                self.logger.warning(f"🩹 Revived WALLET_MISSING -> FINALIZED for {token_mint}")
+                                continue
+
                     self.notifier.notify_text(
-                        f"🩹 **Recovered Token** — `{token_mint}` added to DB\n"
-                        f"💰 Balance: {bal:.6f}"
+                        f"🩹 **Recovered Token** — `{token_mint}` added to DB\n💰 Balance: {bal:.6f}"
                     )
                     self.logger.warning(
                         f"🩹 Found token in wallet but not DB: {token_mint} (balance={bal}) — creating recovery trade"
                     )
-                    entry_usd = price_cache.get(token_mint)
+
+                    entry_usd = float(price_cache.get(token_mint) or 0.0)
                     token_id = token_dao.get_or_create_token(token_mint, None)
+
                     trade_id = trade_dao.insert_trade(
                         token_id=token_id,
                         trade_type="BUY",
@@ -334,41 +370,41 @@ class OpenPositionTracker:
                         status="RECOVERED",
                         config_id=config_id,
                     )
-                    sig_dao.insert_signature(token_id, buy_signature=unique_recovery_sig())
+                    sig_dao.upsert_buy_signature(token_id, buy_signature=unique_recovery_sig())
                     trade = trade_dao.get_trade_by_id(trade_id)
-                    with self.tokens_lock:
-                        self.active_trades[token_mint] = trade
 
+                    with self.tokens_lock:
+                        self.ctx.get("trade_counter").increment()
+                        self.active_trades[token_mint] = trade
             for token_mint, trade in db_tokens.items():
                 if token_mint in IGNORED_MINTS:
                     continue
-                if token_mint in active_trades:
-                    self.logger.debug(
-                        f"⏩ Token {token_mint} is active (status={trade.get('status')}), skipping LOST reconciliation."
-                    )
+                status = str(trade.get("status", "")).upper()
+                if status in ("SUBMITTED", "CONFIRMED", "SELLING", "SELL_TIMEOUT","EXIT_REQUESTED"):
                     continue
-                if str(trade.get("status")) == "SELLING":
-                    self.logger.debug(f"⏳ Token {token_mint} in SELLING status, waiting for normal close.")
-                    continue
-
                 if token_mint not in wallet_tokens:
                     self.notifier.notify_text(
-                        f"🧹 **Lost Token** — `{token_mint}` removed (no longer in wallet)"
+                        f"🧹 **Wallet Missing Token** — `{token_mint}` closing as LOST"
                     )
                     self.logger.warning(
-                        f"🧹 Token missing in wallet but open in DB: {token_mint} — closing trade as 'LOST'"
+                        f"🧹 Token missing in wallet but open in DB: {token_mint} — closing trade as WALLET_MISSING"
                     )
-                    trade_dao.close_trade(
-                        trade_id=trade["id"],
-                        exit_usd=0.0,
-                        pnl_percent=-100.0,
-                        trigger_reason="LOST",
-                    )
+
+                    try:
+                        trade_dao.close_trade(
+                            trade_id=trade["id"],
+                            exit_usd=0.0,
+                            pnl_percent=-100.0,
+                            trigger_reason="WALLET_MISSING",
+                        )
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Failed to close WALLET_MISSING for {token_mint}: {e}")
+
                     with self.tokens_lock:
                         self.active_trades.pop(token_mint, None)
 
             self.logger.info(
-                f"🔍 Reconciliation complete — Wallet={len(wallet_tokens)}, DB={len(db_tokens)}"
+                f"🔍 Reconciliation complete — Wallet={len(wallet_tokens)}, DB(open-ish)={len(db_tokens)}"
             )
 
         except Exception as e:

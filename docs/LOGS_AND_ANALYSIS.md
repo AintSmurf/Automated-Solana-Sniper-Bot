@@ -108,8 +108,9 @@ This tool allows you to extract, clean, and analyze logs for one or multiple tok
   - `logs/backup/debug/`
   - `logs/info.log`
 - Matches logs by:
-  - `--signature` (transaction signature)
-  - `--token` (mint address)
+  - `mint_signature`
+  - `buy_signature`
+  - `sell_signature`
 - Removes duplicate or overlapping lines
 - Sorts all matched logs chronologically
 - Outputs a clean, consolidated log to:  
@@ -119,9 +120,16 @@ This tool allows you to extract, clean, and analyze logs for one or multiple tok
 
 ### Manual Usage (One Token)
 
-To analyze a **single** token and transaction:
+- To analyze a **single** token and transaction:
+  - The extractor is **batch-based** and expects a `pairs.csv` file.
+  - Create a minimal CSV with one row:
+| token_address|mint_signature |buy_signature |sell_signature |
+|-------------|------------- | -------------|-------------|
+| <TOKEN_MINT>|<MINT_SIG>|<BUY_SIG> |<SELL_SIG>|
+
+
 ```bash
-    python -m bot_scripts.analyze --signature <txn_signature> --token <token_address>
+  python -m bot_scripts.analyze --pairs pairs.csv
 ```
 This will:
 

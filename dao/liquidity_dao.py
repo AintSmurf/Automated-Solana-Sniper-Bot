@@ -8,7 +8,7 @@ class LiquidityDAO:
     def insert_snapshot(self, token_id: int, data: dict) -> int:
         sql = """
         INSERT INTO liquidity_snapshots 
-            (token_id, sol_liq, usdc_liq, usdt_liq, usd1_liq, total_liq, timestamp)
+            (token_id, sol_liq, usdc_liq, usdt_liq, usd1_liq, total_liq, snapshot_time)
         VALUES (%s, %s, %s, %s, %s, %s, to_timestamp(%s))
         RETURNING id;
         """
@@ -19,7 +19,7 @@ class LiquidityDAO:
             data["breakdown"].get("USDT", 0.0),
             data["breakdown"].get("USD1", 0.0),
             data.get("total_liq_usd", 0.0),
-            data.get("timestamp", 0.0),
+            data.get("snapshot_time", 0.0),
         )
         return self.sql_helper.execute_insert(sql, params)
    
