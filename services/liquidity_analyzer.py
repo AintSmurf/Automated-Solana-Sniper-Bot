@@ -66,19 +66,26 @@ class LiquidityAnalyzer:
         if token_amount > 0 and breakdown_usd["SOL"] > 0:
             launch_price = self.get_current_price_on_chain(token_mint)
         token_liq_usd = token_amount * launch_price
-        total_liq_usd = breakdown_usd["SOL"] + token_liq_usd
-        return {
-            "token_mint": token_mint,
-            "token_amount": token_amount,
-            "launch_price_usd": launch_price,
-            "breakdown": breakdown_usd,
-            "token_liq_usd": token_liq_usd,
-            "total_liq_usd": total_liq_usd,
-            "timestamp": time.time(),
-            "pool_address": result.get("pool_owner")
-        }
+        total_liq_usd = (
+                breakdown_usd["SOL"]
+                + breakdown_usd["USDC"]
+                + breakdown_usd["USDT"]
+                + breakdown_usd["USD1"]
+                + token_liq_usd
+            )
 
-    def analyze_liquidty(self, transaction: dict, token_mint: str, min_liq: float) -> bool:
+        return {
+                "token_mint": token_mint,
+                "token_amount": token_amount,
+                "launch_price_usd": launch_price,
+                "breakdown": breakdown_usd,
+                "token_liq_usd": token_liq_usd,
+                "total_liq_usd": total_liq_usd,
+                "timestamp": time.time(),
+                "pool_address": result.get("pool_owner")
+            }
+
+    def analyze_liquidity(self, transaction: dict, token_mint: str, min_liq: float) -> bool:
         pool_data = self.store_pool_mapping(token_mint, transaction)
         if not pool_data:
             return False
@@ -180,15 +187,17 @@ class LiquidityAnalyzer:
         try:
             post_balances = transaction.get("meta", {}).get("postTokenBalances", [])
             account_keys = transaction.get("transaction", {}).get("message", {}).get("accountKeys", [])
+            loaded = transaction.get("meta", {}).get("loadedAddresses", {})
+            all_keys = account_keys + loaded.get("writable", []) + loaded.get("readonly", [])
 
             pool_address = self.detect_pool_pda(post_balances, token_mint)
             if not pool_address:
                 self.logger.debug(f"⚠️ No pool detected for {token_mint}")
                 return None
 
-            if any(pid in account_keys for pid in PUMPFUN_PROGRAM_IDS):
+            if any(pid in all_keys for pid in PUMPFUN_PROGRAM_IDS):
                 dex = "pumpfun"
-            elif any(pid in account_keys for pid in RAYDIUM_PROGRAM_IDS):
+            elif any(pid in all_keys for pid in RAYDIUM_PROGRAM_IDS):
                 dex = "raydium"
             else:
                 dex = "unknown"

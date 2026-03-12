@@ -1,0 +1,57 @@
+{
+    "NETWORK": "devnet",
+    "SIM_MODE": false,
+    "UI_MODE": false,
+     "MIN_TOKEN_LIQUIDITY": 5000,
+    "MAX_TOKEN_AGE_SECONDS": 30,
+    "TRADE_AMOUNT": 10,
+    "MAXIMUM_TRADES": 150,
+    "TIMEOUT_SECONDS": 75,
+    "TIMEOUT_PROFIT_THRESHOLD": 1.03,
+    "SLPG": 3.0,
+    "TP": 1.4,
+    "SL": 0.2,
+    "TRAILING_STOP": 0.12,
+    "MIN_TSL_TRIGGER_MULTIPLIER": 1.3,
+    "DUST_THRESHOLD_USD": 1,
+    "EARLY_SL_SECONDS": 20,
+    "EARLY_SL_PCT": 0.07,           
+    "TIMEOUT_PNL_FLOOR": -0.03,
+    "MIN_POST_BUY_SCORE": 3,
+    "USE_SENDER": {
+        "REGION": "global",
+        "BUY": false,
+        "SELL": false
+    },
+    "EXIT_RULES": {
+        "USE_TP": true,
+        "USE_TSL": true,
+        "USE_SL": true,
+        "USE_TIMEOUT": true
+    },
+    "NOTIFY": {
+        "DISCORD": false,
+        "TELEGRAM": false,
+        "SLACK": false
+    },
+    "RATE_LIMITS": {
+        "helius": {
+            "min_interval": 0.02,
+            "jitter_range": [
+                0.005,
+                0.01
+            ],
+            "max_requests_per_minute": null,
+            "name": "Helius_limits"
+        },
+        "jupiter": {
+            "min_interval": 1.0,
+            "jitter_range": [
+                0.05,
+                0.15
+            ],
+            "max_requests_per_minute": 60,
+            "name": "Jupiter_limits"
+        }
+    }
+}

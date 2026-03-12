@@ -24,11 +24,6 @@ class ScamChecker:
             self.logger.warning(f"🚨 Zero output for {token_mint}. No liquidity.")
             return True
 
-        # keep as a rough sanity check
-        if in_amount / out_amount > 10000:
-            self.logger.warning(f"⚠️ Unreasonable price ratio for {token_mint}.")
-            return True
-
         self.logger.info(f"✅ Token {token_mint} passed quote sanity checks.")
         return False
   
@@ -38,7 +33,7 @@ class ScamChecker:
         )
         quote = self.ctx.get("jupiter_client").get_quote_dict(
             token_mint,
-            "So11111111111111111111111111111111111111112",  # WSOL
+            "So11111111111111111111111111111111111111112", 
             token_amount,
         )
 
@@ -47,22 +42,21 @@ class ScamChecker:
 
         if self.is_token_scam(quote["quote"], token_mint):
             return False
+
         try:
             mint_info = self.ctx.get("helius_client").get_mint_account_info(token_mint) or {}
-            token_info = mint_info.get("token_info") or {}
-            mint_authority = token_info.get("mint_authority")
-            freeze_authority = token_info.get("freeze_authority")
-            if mint_authority is not None:
+
+            authorities = mint_info.get("authorities") or []
+            frozen = mint_info.get("frozen", False)
+            mutable = mint_info.get("mutable", False)
+
+            if frozen:
                 self.logger.warning(
-                    f"🚨 Token {token_mint} mint authority still exists ({mint_authority}). HIGH RISK."
+                    f"🚨 Token {token_mint} is frozen. HIGH RISK."
                 )
                 return False
-            if freeze_authority is not None:
-                self.logger.warning(
-                    f"🚨 Token {token_mint} freeze authority still exists ({freeze_authority}). HIGH RISK."
-                )
-                return False
-            if mint_info.get("mutable", False):
+
+            if mutable:
                 if self.ctx.get("rug_check").is_liquidity_unlocked(token_mint):
                     self.logger.warning(
                         f"🚨 Token {token_mint} is mutable & liquidity is NOT locked! HIGH RISK."
@@ -73,6 +67,11 @@ class ScamChecker:
                         f"⚠️ Token {token_mint} is mutable but liquidity is locked. Still some risk."
                     )
 
+            if authorities:
+                self.logger.warning(
+                    f"⚠️ Token {token_mint} still has authorities: {authorities}"
+                )
+
             self.logger.info(f"✅ Token {token_mint} passed first-phase scam checks.")
             return True
 
@@ -80,7 +79,7 @@ class ScamChecker:
             self.logger.error(f"❌ Error checking scam tests for {token_mint}: {e}", exc_info=True)
             return False
  
-    def second_phase_tests(self, token_mint:str,signature:str,market_cap:float, attempt:int=1):
+    def second_phase_tests(self, token_mint: str, signature: str, market_cap: float, attempt: int = 1):
         self.logger.info(f"⏳ Running DELAYED post-buy check (attempt {attempt}) for {token_mint}...")
 
         results = {
@@ -90,6 +89,9 @@ class ScamChecker:
             "MarketCap_Check": False,
         }
         score = 0
+        volume_stats = {}
+        holders_count = 0
+
         # LP lock ratio
         try:
             lp_status = self.ctx.get("rug_check").is_liquidity_unlocked_test(token_mint)
@@ -97,7 +99,6 @@ class ScamChecker:
                 results["LP_Check"] = True
                 score += 1
             elif lp_status == "risky":
-                results["LP_Check"] = False
                 score += 0.5
         except Exception as e:
             self.logger.error(f"❌ LP check failed for {token_mint}: {e}")
@@ -113,10 +114,8 @@ class ScamChecker:
         # Volume growth since launch
         try:
             self.ctx.get("volume_tracker").check_volume_growth(token_mint, signature)
-            stats = self.ctx.get("volume_tracker").stats(token_mint, window=999999)
-            token_id = self.ctx.get("token_dao").get_token_id_by_address(token_mint)
-            self.ctx.get("volume_dao").insert_volume_snapshot(token_id, stats)
-            if stats["delta_volume"] > 0:
+            volume_stats = self.ctx.get("volume_tracker").stats(token_mint, window=999999)
+            if volume_stats.get("delta_volume", 0) > 0:
                 results["Volume_Check"] = True
                 score += 1
         except Exception as e:
@@ -129,8 +128,16 @@ class ScamChecker:
                 score += 1
         except Exception as e:
             self.logger.error(f"❌ Market cap check failed for {token_mint}: {e}")
-        amount_of_holders = self.ctx.get("helius_client").get_holders_amount(token_mint)
-        token_id = self.ctx.get("token_dao").get_token_id_by_address(token_mint)
-        self.ctx.get("scam_checker_dao").insert_token_results(token_id,results["LP_Check"],results["Holders_Check"],results["Volume_Check"],results["MarketCap_Check"],score)
-        self.ctx.get("token_dao").insert_token_stats(token_id,market_cap,amount_of_holders)
-        return {"score": score, "results": results}
+
+        try:
+            holders_count = self.ctx.get("helius_client").get_holders_amount(token_mint)
+        except Exception as e:
+            self.logger.error(f"❌ Error fetching holders amount for {token_mint}: {e}")
+
+        return {
+            "score": score,
+            "results": results,
+            "holders_count": holders_count,
+            "market_cap": market_cap,
+            "volume_stats": volume_stats,
+        }

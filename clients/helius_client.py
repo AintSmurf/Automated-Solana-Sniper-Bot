@@ -303,10 +303,12 @@ class HeliusClient:
             )
         try:
             result =  self._assert_response_ok(response_json,f"get_mint_account_info {token_address}")
-            frozen = result.get("ownership", {}).get("frozen",False )
-            authorities = result.get("authorities", {})
-            mutable = result.get("mutable", False)
-            return {"authorities":authorities,"frozen":frozen,"mutable":mutable}
+            return {
+                    "authorities": result.get("authorities", []),
+                    "frozen": result.get("ownership", {}).get("frozen", False),
+                    "mutable": result.get("mutable", False),
+                    "token_info": result.get("token_info", {}),
+                }
         except Exception as e:
             self.logger.error(f"❌ Error fetching token data: {e}")
             return {}

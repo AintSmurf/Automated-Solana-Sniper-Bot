@@ -58,13 +58,9 @@ class BotOrchestrator:
 
         # dedupe structures
         ctx.register("signature_seen", set())
-        ctx.register("signature_seen_lock", Lock())
-        
-
+        ctx.register("signature_seen_lock", Lock())      
         ctx.register("sig_to_mint", {})
         ctx.register("pending_data", {})
-
-
         ctx.register("known_tokens", set())
         ctx.register("known_tokens_lock", Lock())
        

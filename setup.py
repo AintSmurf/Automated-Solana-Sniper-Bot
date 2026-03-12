@@ -4,7 +4,7 @@ setup(
     name="solana-sniper-bot",
     version="3.4.5",
     packages=find_packages(exclude=("tests", "docs")),
-    python_requires=">=3.10",
+    python_requires=">=3.9",
     install_requires=[
         "discord.py==2.5.2",
         "numpy==2.2.3",
@@ -29,4 +29,6 @@ setup(
         "pytest==9.0.2",
         "jsonschema==4.25.1",
     ],
+    extras_require={
+        "test": ["pytest==9.0.2",]},
 )

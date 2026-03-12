@@ -3,6 +3,89 @@
 All notable changes to this project will be documented in this file.  
 
 ---
+## [Unreleased] – Unit Test Foundation, ScamChecker Hardening, Liquidity Coverage & CI Prep
+
+### Added
+- Initial unit-test suite with pytest markers for service-level logic.
+- Unit coverage added for:
+  - `ScamChecker.is_token_scam()`
+  - `ScamChecker.first_phase_tests()`
+  - `ScamChecker.second_phase_tests()`
+  - `LiquidityAnalyzer.calculate_on_chain_price()`
+  - `LiquidityAnalyzer.extract_token_mint()`
+  - `LiquidityAnalyzer.detect_pool_pda()`
+  - `LiquidityAnalyzer.store_pool_mapping()`
+  - `LiquidityAnalyzer.parse_liquidity_logs()`
+  - `LiquidityAnalyzer._calculate_liquidity()`
+- Reusable unit-test fakes / fixtures for:
+  - Jupiter client
+  - Helius client
+  - RugCheck
+  - VolumeTracker
+  - Logger
+  - realistic trimmed liquidity transaction fixture
+- Excel-based testing tracker for:
+  - current unit coverage
+  - planned next tests
+  - CI / Jenkins automation tasks
+
+### Changed
+- `ScamChecker.first_phase_tests()` updated to use normalized Helius mint-account fields:
+  - `authorities`
+  - `frozen`
+  - `mutable`
+- First-phase scam rules adjusted:
+  - `frozen = True` → fail
+  - `mutable + unlocked liquidity` → fail
+  - `authorities present` → warning / risk flag, not automatic fail
+- `ScamChecker.second_phase_tests()` changed to return a computed result bundle instead of writing directly to the DB.
+- `_delayed_post_buy_handler()` now handles persistence of:
+  - post-buy results
+  - holders count
+  - volume snapshot
+  - token stats
+- Improved separation between:
+  - checker logic
+  - persistence
+  - delayed post-buy orchestration
+- `LiquidityAnalyzer.store_pool_mapping()` updated to support versioned Solana transactions by checking:
+  - `message.accountKeys`
+  - `meta.loadedAddresses.writable`
+  - `meta.loadedAddresses.readonly`
+- Liquidity parsing tests now use trimmed real transaction shapes instead of invented payloads where useful.
+
+### Fixed
+- Removed unreliable raw quote ratio heuristic from `is_token_scam()` that could false-flag valid Solana meme coins.
+- Fixed mismatch between `HeliusClient.get_mint_account_info()` output and `ScamChecker.first_phase_tests()` expectations.
+- Guarded `second_phase_tests()` against uninitialized `volume_stats` / `holders_count` on exception paths.
+- Added missing `debug()` support to dummy logger used by unit tests.
+- Fixed `_calculate_liquidity()` so `total_liq_usd` includes stablecoin liquidity (`USDC`, `USDT`, `USD1`) instead of only SOL-side + token-side liquidity.
+
+### Notes
+- Current unit-test progress:
+  - 31 unit tests passing
+- Current covered services:
+  - `ScamChecker`
+  - expanded `LiquidityAnalyzer`
+- Current `LiquidityAnalyzer` coverage includes:
+  - on-chain price calculation
+  - token mint extraction
+  - pool PDA detection
+  - pool mapping
+  - liquidity log parsing
+  - partial liquidity aggregation
+- Next planned unit coverage:
+  - `LiquidityAnalyzer.analyze_liquidity()`
+
+### Planned
+- Jenkins pipeline to run `pytest -m unit` on push.
+- Add Jenkinsfile with dependency install + test stage.
+- Later split CI stages into:
+  - unit
+  - integration
+  - network / devnet
+
+---
 ## [4.3.7] – Helius getTokenAccountsByOwnerV2 + Dust Cleaner reliability
 
 ### Added

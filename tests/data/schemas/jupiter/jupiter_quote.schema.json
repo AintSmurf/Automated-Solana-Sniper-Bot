@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "required": ["inAmount", "outAmount", "routePlan"],
+  "properties": {
+    "inAmount": { "type": "string" },
+    "outAmount": { "type": "string" },
+    "routePlan": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["swapInfo"],
+        "properties": {
+          "swapInfo": {
+            "type": "object",
+            "required": ["inAmount", "outAmount"],
+            "properties": {
+              "inAmount": { "type": "string" },
+              "outAmount": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

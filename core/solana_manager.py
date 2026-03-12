@@ -36,8 +36,8 @@ class SolanaManager:
     def get_token_age(self, mint_address: str)->int:
         return self.ctx.get("helius_client").get_token_age(mint_address)
     
-    def analyze_liquidty(self, transaction, token_mint: str,min_liq:float) -> bool:
-        return self.ctx.get("liquidity_analyzer").analyze_liquidty(transaction, token_mint,min_liq)
+    def analyze_liquidity(self, transaction, token_mint: str,min_liq:float) -> bool:
+        return self.ctx.get("liquidity_analyzer").analyze_liquidity(transaction, token_mint,min_liq)
 
     def first_phase_tests(self,token_address:str)->bool:
         return self.ctx.get("scam_checker").first_phase_tests(token_address)

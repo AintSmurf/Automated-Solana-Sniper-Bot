@@ -78,7 +78,7 @@ class TransactionManager:
                 return
 
             #liquidity check
-            if not self.ctx.get("solana_manager").analyze_liquidty(result, token_mint, self.min_liq):
+            if not self.ctx.get("solana_manager").analyze_liquidity(result, token_mint, self.min_liq):
                 return
 
             self.logger.info(f"✅ Passed liquidity test — {token_mint}")
@@ -205,9 +205,30 @@ class TransactionManager:
             sol_mgr = self.ctx.get("solana_manager")
             res = sol_mgr.second_phase_tests(token_mint, signature, market_cap) or {}
             score = res.get("score", 0)
+            results = res.get("results", {})
+            holders_count = res.get("holders_count", 0)
+            volume_stats = res.get("volume_stats", {})
+            mc = res.get("market_cap", market_cap) or 0
+
+            #update DB
+            token_id = self.ctx.get("token_dao").get_token_id_by_address(token_mint)
+            if token_id:
+                if volume_stats:
+                    self.ctx.get("volume_dao").insert_volume_snapshot(token_id, volume_stats)
+
+                self.ctx.get("scam_checker_dao").insert_token_results(
+                    token_id,
+                    results.get("LP_Check", False),
+                    results.get("Holders_Check", False),
+                    results.get("Volume_Check", False),
+                    results.get("MarketCap_Check", False),
+                    score,
+                )
+
+                self.ctx.get("token_dao").insert_token_stats(token_id, mc, holders_count)
+            
             min_score = self.ctx.settings.get("MIN_POST_BUY_SCORE", 2)
             min_mc = self.ctx.settings.get("MINIMUM_MARKETCAP", 50_000)
-            mc = market_cap or 0
 
             self.logger.info(
                 f"🛡️ Post-buy score for {token_mint}: {score} (min required={min_score}), "

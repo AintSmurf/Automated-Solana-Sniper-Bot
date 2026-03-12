@@ -83,7 +83,7 @@ class TokenDAO:
             sg.sell_signature  AS sell_signature
             FROM tokens t
             JOIN (
-            SELECT token_id, MAX("timestamp") AS last_trade_ts
+            SELECT token_id, MAX(trade_time) AS last_trade_ts
             FROM trades
             WHERE 1=1
         """
@@ -94,11 +94,11 @@ class TokenDAO:
             params.append(trigger_reason)
 
         if from_ts is not None:
-            sql += ' AND "timestamp" >= %s'
+            sql += ' AND trade_time >= %s'
             params.append(from_ts)
 
         if to_ts is not None:
-            sql += ' AND "timestamp" < %s'
+            sql += ' AND trade_time < %s'
             params.append(to_ts)
 
         sql += """
@@ -125,7 +125,7 @@ class TokenDAO:
         params: list = []
 
         if since_ts:
-            sql += ' AND "timestamp" >= %s'
+            sql += " AND trade_time >= %s"
             params.append(since_ts)
 
         if config_id is not None:
@@ -133,7 +133,7 @@ class TokenDAO:
             params.append(int(config_id))
 
         sql += """
-            ORDER BY "timestamp" DESC, id DESC
+            ORDER BY trade_time DESC, id DESC
         """
 
         if limit is not None:
@@ -163,7 +163,7 @@ class TokenDAO:
             JOIN signatures s      ON s.token_id = tr.token_id
             JOIN safety_results sr ON sr.token_id = tr.token_id
             JOIN token_stats ts    ON ts.token_id = tr.token_id
-            ORDER BY tr."timestamp" DESC, tr.id DESC;
+            ORDER BY tr.trade_time DESC, tr.id DESC;
         """
         return self.sql_helper.execute_select(sql, tuple(params)) or None
 
@@ -178,7 +178,7 @@ class TokenDAO:
 
         sql = cte + """
         SELECT
-            ((tr."timestamp" AT TIME ZONE %s) - INTERVAL '7 hour')::date AS session_date,
+            ((tr.trade_time AT TIME ZONE %s) - INTERVAL '7 hour')::date AS session_date,
             COUNT(*) AS trade_count,
             SUM(tr.pnl_percent) AS total_pnl_percent,
             AVG(tr.pnl_percent) AS avg_pnl_percent,
@@ -225,8 +225,8 @@ class TokenDAO:
             FROM base_trades tr
             JOIN liquidity_snapshots ls
             ON ls.token_id = tr.token_id
-            AND ls."timestamp" <= tr."timestamp"
-            ORDER BY tr.id, ls."timestamp" DESC
+            AND ls.snapshot_time <= tr.trade_time
+            ORDER BY tr.id, ls.snapshot_time DESC
         )
         SELECT
             CASE
@@ -318,7 +318,7 @@ class TokenDAO:
                 tr.entry_usd,
                 tr.exit_usd,
                 tr.pnl_percent,
-                EXTRACT(EPOCH FROM (tr."timestamp" - tok.detected_at)) AS age_seconds
+                EXTRACT(EPOCH FROM (tr.trade_time - tok.detected_at)) AS age_seconds
             FROM base_trades tr
             JOIN tokens tok ON tok.id = tr.token_id
         )
@@ -348,7 +348,7 @@ class TokenDAO:
         """
         params = []
         if since_ts:
-            sql += ' AND tr."timestamp" >= %s'
+            sql += " AND tr.trade_time >= %s"
             params.append(since_ts)
 
         sql += " ORDER BY tr.trigger_reason;"
@@ -381,10 +381,10 @@ class TokenDAO:
         params: list = []
         where = ["1=1"]
         if since_ts:
-            where.append('tr."timestamp" >= %s')
+            where.append("tr.trade_time >= %s")
             params.append(since_ts)
         if until_ts:
-            where.append('tr."timestamp" < %s')
+            where.append("tr.trade_time < %s")
             params.append(until_ts)
 
         if pnl_lte is not None:
@@ -419,7 +419,7 @@ class TokenDAO:
             SELECT
                 tr.id          AS trade_id,
                 tr.token_id,
-                tr."timestamp" AS trade_ts,
+                tr.trade_time AS trade_ts,
                 tr.trade_type,
                 tr.entry_usd,
                 tr.exit_usd,
