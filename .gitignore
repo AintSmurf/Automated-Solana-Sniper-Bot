@@ -42,3 +42,4 @@ tests/devnet
 tests/db
 tests/clean_cache.ps1
 .pytest_cache
+tests/config/devnet_wallet.json
