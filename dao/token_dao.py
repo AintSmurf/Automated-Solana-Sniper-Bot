@@ -4,6 +4,7 @@ from helpers.framework_utils import get_formatted_date_str
 from typing import Optional
 from datetime import datetime
 from typing import Iterable, Optional, Literal
+import pandas as pd
 
 
 
@@ -527,3 +528,155 @@ class TokenDAO:
         all_params = tuple(params + feat_params)
         return self.sql_helper.execute_select(sql, all_params) or None
     
+    def produce_trade_analysis_rows(self,since_ts: str | None = None,until_ts: str | None = None,limit: int | None = None,config_id: int | None = None,simulation: bool | None = None,data_model_version: int | None = None,):
+        where_clauses = ["tr.status = 'CLOSED'"]
+        params = []
+
+        if since_ts:
+            where_clauses.append("tr.trade_time >= %s")
+            params.append(since_ts)
+
+        if until_ts:
+            where_clauses.append("tr.trade_time <= %s")
+            params.append(until_ts)
+
+        if config_id is not None:
+            where_clauses.append("tr.config_id = %s")
+            params.append(config_id)
+
+        if simulation is not None:
+            where_clauses.append("tr.simulation = %s")
+            params.append(simulation)
+        if data_model_version is not None:
+            where_clauses.append("tr.data_model_version = %s")
+            params.append(data_model_version)
+
+        where_sql = " AND ".join(where_clauses)
+
+        limit_sql = ""
+        if limit is not None:
+            limit_sql = "LIMIT %s"
+            params.append(limit)
+
+        sql = f"""
+            SELECT
+                tr.id AS trade_id,
+                tr.token_id,
+                t.token_address,
+                t.detected_at,
+
+                tr.config_id,
+                cv.label AS config_label,
+                cv.config_hash,
+
+                tr.trade_type,
+                tr.entry_usd,
+                tr.exit_usd,
+                tr.pnl_percent,
+                tr.trigger_reason,
+                tr.simulation,
+                tr.status,
+                tr.trade_time,
+                tr.confirmed_at,
+                tr.finalized_at,
+                tr.closed_at,
+
+                s.buy_signature,
+                s.sell_signature,
+                s.buy_time,
+                s.sell_time,
+
+                sr.id AS safety_result_id,
+                sr.score AS safety_score,
+                sr.lp_check,
+                sr.holders_check,
+                sr.volume_check,
+                sr.marketcap_check,
+                sr.checked_at AS safety_checked_at,
+
+                ls.id AS liquidity_snapshot_id,
+                ls.sol_liq,
+                ls.usdc_liq,
+                ls.usdt_liq,
+                ls.usd1_liq,
+                ls.total_liq,
+                ls.snapshot_time AS liquidity_snapshot_time,
+
+                tv.id AS volume_snapshot_id,
+                tv.buy_usd,
+                tv.sell_usd,
+                tv.total_usd,
+                tv.buy_count,
+                tv.sell_count,
+                tv.buy_ratio,
+                tv.net_flow,
+                tv.launch_time,
+                tv.launch_volume,
+                tv.delta_volume,
+                tv.snapshot_time AS volume_snapshot_time,
+
+                ts.market_cap,
+                ts.holders_count
+            FROM trades tr
+            JOIN tokens t
+                ON t.id = tr.token_id
+            LEFT JOIN signatures s
+                ON s.trade_id = tr.id
+            LEFT JOIN safety_results sr
+                ON sr.id = tr.safety_result_id
+            LEFT JOIN liquidity_snapshots ls
+                ON ls.id = tr.liquidity_snapshot_id
+            LEFT JOIN token_volumes tv
+                ON tv.id = tr.volume_snapshot_id
+            LEFT JOIN token_stats ts
+                ON ts.token_id = tr.token_id
+            LEFT JOIN config_versions cv
+                ON cv.id = tr.config_id
+            WHERE {where_sql}
+            ORDER BY tr.trade_time DESC
+            {limit_sql};
+        """
+        return self.sql_helper.execute_select(sql, tuple(params))
+    
+    def produce_config_comparison_rows(self,since_ts: str | None = None,until_ts: str | None = None,simulation: bool | None = None,data_model_version: int | None = None,):
+        where_clauses = ["status = 'CLOSED'"]
+        params = []
+
+        if since_ts:
+            where_clauses.append("trade_time >= %s")
+            params.append(since_ts)
+
+        if until_ts:
+            where_clauses.append("trade_time <= %s")
+            params.append(until_ts)
+
+        if simulation is not None:
+            where_clauses.append("simulation = %s")
+            params.append(simulation)
+        
+        if data_model_version is not None:
+            where_clauses.append("data_model_version = %s")
+            params.append(data_model_version)
+
+        where_sql = " AND ".join(where_clauses)
+
+        sql = f"""
+            SELECT
+                config_id,
+                COUNT(*) AS trade_count,
+                ROUND(AVG(pnl_percent)::numeric, 4) AS avg_pnl_percent,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY pnl_percent) AS median_pnl_percent,
+                ROUND(100.0 * AVG(CASE WHEN pnl_percent > 0 THEN 1 ELSE 0 END), 2) AS win_rate_percent,
+                SUM(CASE WHEN trigger_reason = 'SL' THEN 1 ELSE 0 END) AS sl_count,
+                SUM(CASE WHEN trigger_reason = 'TP' THEN 1 ELSE 0 END) AS tp_count,
+                SUM(CASE WHEN trigger_reason = 'TSL' THEN 1 ELSE 0 END) AS tsl_count,
+                SUM(CASE WHEN trigger_reason LIKE 'BAD_SCORE%%' THEN 1 ELSE 0 END) AS bad_score_count,
+                SUM(CASE WHEN trigger_reason = 'TIMEOUT' THEN 1 ELSE 0 END) AS timeout_count,
+                MIN(trade_time) AS first_trade_time,
+                MAX(trade_time) AS last_trade_time
+            FROM trades
+            WHERE {where_sql}
+            GROUP BY config_id
+            ORDER BY config_id DESC;
+        """
+        return self.sql_helper.execute_select(sql, tuple(params))

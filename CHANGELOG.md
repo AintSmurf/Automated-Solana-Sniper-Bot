@@ -3,7 +3,133 @@
 All notable changes to this project will be documented in this file.  
 
 ---
-## [Unreleased] – Unit Test Foundation, ScamChecker Hardening, Liquidity Coverage & CI Prep
+## [Unreleased] – NA
+---
+
+## [4.3.9] – Trade Lifecycle Ownership, Shared Active Cache, Exit Logic Repair & WebSocket Reliability
+### Added
+- Shared runtime cache wiring for live tracked positions:
+  - `active_trades`
+  - `active_trades_lock`
+- New lifecycle-owned state transition helpers:
+  - `TradeLifecycleService.request_exit(...)`
+  - `TradeLifecycleService.mark_sell_submitted(...)`
+- Delayed post-buy flow now checks trade status before attempting a forced close, skipping already closed / failed / timed-out trades.
+- Added WebSocket self-healing watchdog for Helius live detection:
+  - Tracks last received message / pong timestamp.
+  - Detects stale WebSocket connections after a configured stale window.
+  - Forces the current stale socket to close and return control to the orchestrator.
+  - Adds a hard fallback using process exit when `run_forever()` does not return after stale close, allowing systemd to restart the bot.
+  - Added DB-backed bot run sessions:
+  - New `bot_runs` table for tracking each bot session.
+  - New `run_id` linkage on trades to separate individual runs from shared `config_id`.
+  - Added `RunSessionDAO` and `RunSessionManager` for creating, resuming, pausing, and completing bot runs.
+- Added graceful shutdown handling for manual stops:
+  - `Ctrl+C` / `SIGINT` marks the active run as `PAUSED`.
+  - `systemctl stop` / `SIGTERM` can mark the active run as `PAUSED`.
+  - Hard WebSocket recovery exits skip graceful status updates, leaving the run as `RUNNING` for crash-resume behavior.
+
+
+### Changed
+- Trade-state ownership was tightened:
+  - `OpenPositionTracker` now decides exits
+  - `TraderManager` executes buy/sell transactions
+  - `TradeLifecycleService` owns DB trade-state transitions
+- `OpenPositionTracker` now uses the shared `active_trades` cache from bot wiring instead of owning a separate isolated runtime cache.
+- `TradeLifecycleService` now updates the shared `active_trades` cache directly instead of reaching through `OpenPositionTracker`.
+- `TraderManager.sell()` no longer updates `SELLING` directly in the DB before execution; SELLING is now delegated to `TradeLifecycleService` after a valid sell signature is obtained.
+- `OpenPositionTracker.manual_close()` no longer updates real-mode DB exit state directly; it now delegates exit requests to `TradeLifecycleService`.
+- `BotOrchestrator` wiring was reorganized into cleaner dependency sections:
+  - infrastructure
+  - DB / DAOs
+  - transport clients
+  - domain clients
+  - analyzers / utilities
+  - core logic
+- `BotOrchestrator` logging now consistently uses `self.logger`.
+- WebSocket lifecycle is now orchestrator-owned:
+  - `HeliusConnector.start_ws()` now runs one WebSocket session and returns to `BotOrchestrator._safe_run()` when the session ends.
+  - `BotOrchestrator._safe_run()` now restarts crashed/exited workers only while their stop event is not set.
+  - WebSocket restart behavior is now tied to `self.stops["ws"]`, so max-trades shutdown is respected.
+- Updated server runtime behavior to use `systemd Restart=on-failure` instead of `Restart=always`, so clean shutdown after `MAXIMUM_TRADES` does not restart the bot.
+- Extracted wallet ↔ DB reconciliation from `OpenPositionTracker` into a dedicated service.
+- Extracted price-sample persistence from `OpenPositionTracker` into a dedicated recorder service.
+- Added config-driven backtesting / replay using:
+  - `config_versions`
+  - `price_samples`
+- Trade counter recovery is now run-session aware:
+  - Bot startup restores `TradeCounter` from DB using the active `run_id`.
+  - Manual stops create a fresh run on the next start instead of resuming old paused runs.
+  - Crash/systemd recovery resumes the same `RUNNING` run to prevent overtrading after restart.
+- `BotOrchestrator` now creates or resumes the active run session before initializing core services that may need `run_id`.
+
+
+### Fixed
+- Fixed delayed post-buy handler trying to close trades that had already been closed by SL / TSL before second-phase checks finished.
+- Fixed launch-price timing issue during liquidity detection where token-side pricing could run before pool mapping was available, causing:
+  - `No pool stored ... cannot fetch price`
+  - `Launch price: 0`
+  - token-side liquidity showing as `0`
+- Fixed shared runtime cache locking so `OpenPositionTracker` now uses the wired shared lock instead of recreating a separate local lock.
+- Fixed shared cache sync behavior:
+  - `OpenPositionTracker._sync_from_db()` now performs a safer merge-style sync instead of destructive overwrite behavior.
+- Fixed time-based exit logic reading the wrong trade field:
+  - `check_emergency_sl()`
+  - `check_timeout()`
+  now use DB-backed trade timing instead of an undefined `timestamp` field.
+- Fixed lifecycle/cache coupling so buy/sell lifecycle handlers update the shared `active_trades` cache instead of depending on `open_position_tracker`.
+- Fixed SELL state ownership leak where `TraderManager` previously marked trades as `SELLING` directly.
+- Fixed EXIT_REQUESTED ownership leak where `OpenPositionTracker` previously updated DB exit state directly.
+- Fixed stale WebSocket deadlock where `ws.close()` could fail to make `run_forever()` return, leaving the bot alive but no longer detecting new tokens.
+- Fixed potential WebSocket restart after `MAXIMUM_TRADES` was reached by wiring the WebSocket stop event into `_safe_run()`.
+- Fixed old watchdog race risk by passing the current WebSocket instance into the watchdog, preventing old watchdog threads from closing newer WebSocket sessions.
+- Fixed shutdown coordination so:
+  - new token detection stops after `MAXIMUM_TRADES`,
+  - transaction fetching stops,
+  - open-position tracking continues until all positions are closed,
+  - clean shutdown does not trigger systemd restart.
+- Fixed overtrading risk after systemd restart:
+  - Previously, a hard WebSocket restart could reset in-memory trade count.
+  - The bot now restores used trade slots from DB for the active `run_id`.
+- Fixed manual-stop ambiguity:
+  - Manually stopping the bot now marks the run as `PAUSED`, so later starts create a fresh run instead of accidentally resuming an unfinished test run.
+
+### Notes
+- Current architecture direction:
+  - `OpenPositionTracker` = exit decision / monitoring
+  - `TraderManager` = transaction execution
+  - `TradeLifecycleService` = trade-state ownership
+- `manual_close()` remains in `OpenPositionTracker` as an exit-request entrypoint.
+- Shared `active_trades` is now treated as a runtime cache / mirror, while DB remains the intended source of truth and wallet reconciliation continues to repair drift.
+- Simulation runs validated the new lifecycle flow more cleanly, but real-mode behavior still requires controlled validation.
+- Runtime recovery now has two layers:
+  - Python-level self-healing for normal WebSocket disconnects / worker exits.
+  - systemd-level recovery for hard-stuck WebSocket sessions via non-zero process exit.
+- With `Restart=on-failure`, crash/stale recovery still works, while intentional clean shutdown after max trades is respected.
+- Run session behavior:
+  - `RUNNING` = crash/systemd recovery should resume this run.
+  - `PAUSED` = manual stop; do not auto-resume.
+  - `MAX_TRADES_DONE` = run completed normally after reaching the trade limit and closing positions.
+
+### Planned
+- Update Jenkins CI pipeline for the bot image:
+  - checkout source
+  - run safety/unit tests first
+  - build the production bot Docker image only after tests pass
+  - push the bot image to Docker Hub
+  - pull the pushed image back and validate imports / startup sanity
+- Add safety-focused tests for critical bot behavior:
+  - SIM mode must never submit real buy/sell transactions.
+  - `MAXIMUM_TRADES` must stop new detection while keeping open-position tracking alive.
+  - WebSocket self-healing must restart before max trades but respect shutdown after max trades.
+  - Run-session recovery must resume the same `RUNNING` run after systemd restart.
+  - Manual stop must mark runs as `PAUSED` and avoid auto-resume on next start.
+  - Failed / timed-out BUY must not consume a trade slot unless wallet ownership is confirmed.
+  - SELL failure must not close the DB trade.
+  - `has_open_positions()` must respect pending futures, active trades, and live DB trades.
+
+---
+## [4.3.8] – Unit Test Foundation, ScamChecker Hardening, Liquidity Coverage & CI Prep
 
 ### Added
 - Initial unit-test suite with pytest markers for service-level logic.
@@ -231,7 +357,7 @@ Added the following keys to `config/bot_settings.json`:
 
     - Reads `EARLY_SL_PCT` and `EARLY_SL_SECONDS` directly from bot_settings.
 
-    - Uses the trade’s timestamp (normalized to UTC) to compute seconds_since entry.
+    - uses DB-backed trade timing fields for elapsed-time calculations.
 
     - Keeps a per-token peak_price_dict and compares against MIN_TSL_TRIGGER_MULTIPLIER:
 
@@ -484,7 +610,7 @@ Added the following keys to `config/bot_settings.json`:
 ### Changed
 - **Trade status model & lifecycle**
   - Introduced explicit `SELLING` status:
-    - `TraderManager.sell()` marks the DB trade as `SELLING` before broadcasting the swap transaction.
+    - `TraderManager.sell()` sell execution is initiated by TraderManager, while lifecycle state transitions are now owned by TradeLifecycleService
     - Prevents reconciliation from incorrectly treating in-flight exits as LOST.
   - Clarified “live” vs “historical” trades:
     - `TradeDAO.get_live_trades()` now returns only `FINALIZED`, `SELLING`, and `SIMULATED` trades.

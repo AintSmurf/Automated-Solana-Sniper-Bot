@@ -55,6 +55,8 @@ class TradeDAO:
             config_id=None,
             safety_result_id=None,
             volume_snapshot_id=None,
+            data_model_version=2,
+            run_id=None
         ):
             current_ts = datetime.now(timezone.utc)
 
@@ -70,9 +72,11 @@ class TradeDAO:
                     trade_time,
                     config_id,
                     safety_result_id,
-                    volume_snapshot_id
+                    volume_snapshot_id,
+                    data_model_version,
+                    run_id
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s,%s)
                 RETURNING id;
             """
             params = (
@@ -87,11 +91,26 @@ class TradeDAO:
                 config_id,            
                 safety_result_id,      
                 volume_snapshot_id,
+                data_model_version,
+                run_id,
             )
             return self.sql_helper.execute_insert(sql, params)
 
     def get_trade_by_buy_signature(self, buy_signature: str):
         sql = """
+            SELECT t.*, tok.token_address
+            FROM signatures s
+            JOIN trades t ON t.id = s.trade_id
+            JOIN tokens tok ON tok.id = t.token_id
+            WHERE s.buy_signature = %s
+            AND t.status IN ('SUBMITTED','CONFIRMED','FINALIZED','SELLING')
+            ORDER BY t.trade_time DESC
+            LIMIT 1;
+        """
+        rows = self.sql_helper.execute_select(sql, (buy_signature,))
+        if rows:
+            return rows[0]
+        fallback_sql = """
             SELECT t.*, tok.token_address
             FROM signatures s
             JOIN trades t ON t.token_id = s.token_id
@@ -101,20 +120,27 @@ class TradeDAO:
             ORDER BY t.trade_time DESC
             LIMIT 1;
         """
-        rows = self.sql_helper.execute_select(sql, (buy_signature,))
+        rows = self.sql_helper.execute_select(fallback_sql, (buy_signature,))
         return rows[0] if rows else None
 
-    def get_trade_by_token(self, token_mint: str):
+    def get_trade_by_token(self, token_mint: str, only_open: bool = True):
         sql = """
             SELECT t.*
             FROM trades t
             JOIN tokens tok ON tok.id = t.token_id
             WHERE tok.token_address = %s
-            AND t.status <> 'CLOSED'
+        """
+        params = [token_mint]
+
+        if only_open:
+            sql += " AND t.status <> 'CLOSED'"
+
+        sql += """
             ORDER BY t.trade_time DESC
             LIMIT 1;
         """
-        rows = self.sql_helper.execute_select(sql, (token_mint,))
+
+        rows = self.sql_helper.execute_select(sql, tuple(params))
         return rows[0] if rows else None
 
     def update_trade_status(self, trade_id: int, status: str):
@@ -259,4 +285,47 @@ class TradeDAO:
             WHERE id=%s;
         """
         self.sql_helper.execute_update(sql, (status, trade_id))
+    
+    def update_results_ids(self,trade_id: int,safety_result_id: int | None = None,volume_snapshot_id: int | None = None,liquidity_snapshot_id: int | None = None,) -> None:
+        updates = []
+        params = []
+        if safety_result_id is not None:
+            updates.append("safety_result_id = %s")
+            params.append(safety_result_id)
 
+        if volume_snapshot_id is not None:
+            updates.append("volume_snapshot_id = %s")
+            params.append(volume_snapshot_id)
+
+        if liquidity_snapshot_id is not None:
+            updates.append("liquidity_snapshot_id = %s")
+            params.append(liquidity_snapshot_id)
+
+        if not updates:
+            return
+
+        sql = f"""
+            UPDATE trades
+            SET {", ".join(updates)}
+            WHERE id = %s;
+        """
+        params.append(trade_id)
+
+        self.sql_helper.execute_update(sql, tuple(params))
+         
+    def count_trade_slots_used(self, run_id: int) -> int:
+        sql = """
+            SELECT COUNT(*)
+            FROM trades
+            WHERE run_id = %s
+            AND status IN (
+                'FINALIZED',
+                'SELLING',
+                'SIMULATED',
+                'EXIT_REQUESTED',
+                'SELL_TIMEOUT',
+                'CLOSED'
+            );
+        """
+        rows = self.sql_helper.execute_select(sql, (run_id,))
+        return rows[0][0] if rows else 0

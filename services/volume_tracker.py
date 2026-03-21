@@ -1,8 +1,8 @@
 import time
 from collections import deque
 from services.bot_context import BotContext
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import Future
+from config.dex_detection_rules import KNOWN_BASES
 
 
 
@@ -70,13 +70,19 @@ class VolumeTracker:
             "delta_volume": round(delta_volume, 2),
         }
   
-    def parse_helius_swap_volume(self, pool_address) -> dict:
+    def parse_helius_swap_volume(self, pool_address: str) -> dict:
         volumes = {}
-        price_cache = {}        
         try:
             response = self.ctx.get("helius_client").get_enhanced_transactions_by_address(pool_address)
         except Exception as e:
             self.logger.error(f"❌ Error fetching transactions for {pool_address}: {e}")
+            return {}
+
+        try:
+            sol_price = self.ctx.get("jupiter_client").get_sol_price()
+        except Exception as e:
+            self.logger.warning(f"⚠️ Failed to fetch SOL price: {e}")
+            sol_price = 0.0
 
         for tx in response:
             transfers = tx.get("tokenTransfers", [])
@@ -85,18 +91,30 @@ class VolumeTracker:
 
             for t in transfers:
                 mint = t.get("mint")
-
-                if mint not in price_cache:
-                    price_cache[mint] = self.ctx.get("liquidity_analyzer").get_token_price_onchain(mint, pool_address)
-
-                price = price_cache[mint]
-                frm, to = t.get("fromUserAccount"), t.get("toUserAccount")
-                amount = float(t.get("tokenAmount", 0))
-
+                frm = t.get("fromUserAccount")
+                to = t.get("toUserAccount")
+                try:
+                    amount = float(t.get("tokenAmount", 0) or 0)
+                except (TypeError, ValueError):
+                    amount = 0.0
+                if not mint or amount <= 0:
+                    continue
+                base_info = KNOWN_BASES.get(mint)
+                if not base_info:
+                    continue
+                symbol = base_info["symbol"]
+                if symbol == "SOL":
+                    usd_value = amount * sol_price
+                elif symbol in {"USDC", "USDT", "USD1"}:
+                    usd_value = amount
+                else:
+                    continue
+                if usd_value <= 0:
+                    continue
                 if frm == pool_address:
-                    self._accumulate(volumes, mint, "buy", amount * price)
+                    self._accumulate(volumes, mint, "sell", usd_value)
                 elif to == pool_address:
-                    self._accumulate(volumes, mint, "sell", amount * price)
+                    self._accumulate(volumes, mint, "buy", usd_value)
 
         total_usd = sum(v["total_usd"] for v in volumes.values())
         self.logger.info(f"✅ Finished volume extraction — {len(volumes)} tokens, total volume ${total_usd:,.2f}")
@@ -108,12 +126,21 @@ class VolumeTracker:
         volumes[mint][f"{label}_usd"] += usd_value
         volumes[mint]["total_usd"] = volumes[mint]["buy_usd"] + volumes[mint]["sell_usd"]
 
-    def _volume_worker(self, token_mint:str, signature:str,block_time:int)->None:
+    def _volume_worker(self, token_mint: str, signature: str, block_time: int) -> None:
         pool_address = self.ctx.get("liquidity_dao").get_pool_address(token_mint)
+        if not pool_address:
+            self.logger.warning(f"⚠️ No pool address found for {token_mint}, skipping initial volume snapshot.")
+            return
+
         snap = self.parse_helius_swap_volume(pool_address)
         agg_buy = sum(v.get("buy_usd", 0.0) for v in snap.values())
         agg_sell = sum(v.get("sell_usd", 0.0) for v in snap.values())
-        self.record_trade( token_mint,{"buy_usd": agg_buy, "sell_usd": agg_sell, "total_usd": agg_buy + agg_sell},signature,)
+
+        self.record_trade(
+            token_mint,
+            {"buy_usd": agg_buy, "sell_usd": agg_sell, "total_usd": agg_buy + agg_sell},
+            signature,
+        )
         self.snapshot_launch(token_mint, block_time, agg_buy + agg_sell, signature)
 
     def check_volume_growth(self, token_mint: str, signature: str) -> None:
@@ -125,21 +152,25 @@ class VolumeTracker:
             except Exception as e:
                 self.logger.warning(f"⚠️ Volume worker not finished for {token_mint}: {e}")
 
-        launch_info = self.token_launch_info.get(token_mint, {})
+        launch_info = self.token_launch_info.get(token_mint)
+        if not launch_info:
+            self.logger.warning(f"⚠️ No launch snapshot found for {token_mint}, skipping volume growth check.")
+            return
+
         pool_address = self.ctx.get("liquidity_dao").get_pool_address(token_mint)
+        if not pool_address:
+            self.logger.warning(f"⚠️ No pool address found for {token_mint}, skipping volume growth check.")
+            return
 
         snap_volumes = self.parse_helius_swap_volume(pool_address)
 
-        # aggregate snapshot
         agg_buy = sum(v.get("buy_usd", 0.0) for v in snap_volumes.values())
         agg_sell = sum(v.get("sell_usd", 0.0) for v in snap_volumes.values())
         total = agg_buy + agg_sell
 
-        # get previous snapshot
         prev_total = launch_info.get("last_snapshot", launch_info.get("launch_volume", 0.0))
         delta = max(total - prev_total, 0)
 
-        # record only the delta
         if delta > 0:
             self.record_trade(
                 token_mint,
@@ -151,10 +182,9 @@ class VolumeTracker:
                 signature=signature,
             )
 
-        # update last snapshot
-        self.token_launch_info[token_mint]["last_snapshot"] = total
-        self.token_launch_info[token_mint]["last_buy"] = agg_buy
-        self.token_launch_info[token_mint]["last_sell"] = agg_sell
+        launch_info["last_snapshot"] = total
+        launch_info["last_buy"] = agg_buy
+        launch_info["last_sell"] = agg_sell
 
         self.logger.debug(
             f"📊 Updated volume delta for {token_mint}: Δ ${delta:,.2f}, total so far ${total:,.2f}"

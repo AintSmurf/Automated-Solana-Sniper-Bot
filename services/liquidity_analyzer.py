@@ -63,8 +63,9 @@ class LiquidityAnalyzer:
 
         token_amount =  result["token_reserve"]
         launch_price = 0.0
-        if token_amount > 0 and breakdown_usd["SOL"] > 0:
-            launch_price = self.get_current_price_on_chain(token_mint)
+        pool_address = result.get("pool_owner")
+        if token_amount > 0 and breakdown_usd["SOL"] > 0 and pool_address:
+            launch_price = self.get_token_price_onchain(token_mint, pool_address)
         token_liq_usd = token_amount * launch_price
         total_liq_usd = (
                 breakdown_usd["SOL"]
@@ -89,9 +90,7 @@ class LiquidityAnalyzer:
         pool_data = self.store_pool_mapping(token_mint, transaction)
         if not pool_data:
             return False
-
         pool_address, dex = pool_data
-
         data = self.parse_liquidity_logs(transaction, token_mint, pool_address)
         sol_liq = data["breakdown"].get("SOL", 0)
         total_liq = data["total_liq_usd"]
@@ -99,26 +98,16 @@ class LiquidityAnalyzer:
         if total_liq <= 0:
             self.logger.info(f"ℹ️ No liquidity info found for {token_mint}.")
             return False
-
-        self.logger.info(
-            f"💧 Liquidity detected for {token_mint} - Total ${total_liq:.2f}, "
-            f"SOL side: ${sol_liq:.2f}, Token side: ${data['token_liq_usd']:.2f}, "
-            f"Launch price: ${data['launch_price_usd']:.8f}"
-        )
         data["pool_address"] = pool_address
         data["dex"] = dex
         self.ctx.get("pending_data")[token_mint] = data
         if sol_liq >= min_liq:
             if token_mint not in self.token_pools:
                 self.token_pools[token_mint] = {"pool": pool_address, "dex": dex}
-
                 self.logger.info(f"💾 Pool meets threshold — saving {token_mint}")
-                self.logger.debug(
-                    f"🔍 Pool {pool_address[:6]}... detected with {sol_liq:.2f} SOL liquidity for {token_mint}"
-                )
+                self.logger.info( f"💧 Liquidity detected for {token_mint} - Total ${total_liq:.2f}, " f"SOL side: ${sol_liq:.2f}, Token side: ${data['token_liq_usd']:.2f}, " f"Launch price: ${data['launch_price_usd']:.8f}")
+                self.logger.debug(f"🔍 Pool {pool_address[:6]}... detected with {sol_liq:.2f} SOL liquidity for {token_mint}")
             return True
-
-        self.logger.info(f"⛔ Low liquidity (${sol_liq:.2f}) for {token_mint}")
         return False
 
     def calculate_on_chain_price(self,reserve_token: int,token_decimals: int,reserve_base: int,base_decimals: int,base_symbol: str,sol_price: float) -> float:
@@ -141,20 +130,19 @@ class LiquidityAnalyzer:
         try:
             reserves = self.ctx.get("helius_client").get_token_accounts_by_owner(pool_address)
             if len(reserves) < 2:
-                self.logger.warning(f"⚠️ Pool {pool_address} has insufficient reserves")
+                self.logger.debug(f"⚠️ Pool {pool_address} has insufficient reserves")
                 return 0.0
-
             token_reserve = next((r for r in reserves if r["mint"] == token_mint), None)
             if not token_reserve:
-                self.logger.warning(f"⚠️ Token mint {token_mint} not found in pool {pool_address}")
+                self.logger.debug(f"⚠️ Token mint {token_mint} not found in pool {pool_address}")
                 return 0.0
             base_reserve = next((r for r in reserves if r["mint"] in KNOWN_BASES), None)
             if not base_reserve:
-                self.logger.warning(f"⚠️ No known base in pool {pool_address} for {token_mint}")
+                self.logger.debug(f"⚠️ No known base in pool {pool_address} for {token_mint}")
                 return 0.0
             base_info = KNOWN_BASES.get(base_reserve["mint"])
             if not base_info:
-                self.logger.warning(f"⚠️ Unknown base mint {base_reserve['mint']} in pool {pool_address}")
+                self.logger.debug(f"⚠️ Unknown base mint {base_reserve['mint']} in pool {pool_address}")
                 return 0.0
             
             sol_price = 1.0          

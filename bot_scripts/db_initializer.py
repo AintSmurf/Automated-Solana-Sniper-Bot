@@ -164,7 +164,8 @@ def create_tables():
                         buy_signature TEXT UNIQUE,
                         sell_signature TEXT,
                         buy_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                        sell_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                        sell_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                        trade_id INTEGER REFERENCES trades(id) ON DELETE SET NULL
                     );
                     """)
 
@@ -183,22 +184,42 @@ def create_tables():
                     );
                     """)
 
+                    # 2) Bot run sessions
+                    cur.execute("""
+                    CREATE TABLE IF NOT EXISTS bot_runs (
+                        id SERIAL PRIMARY KEY,
+                        config_id INT REFERENCES config_versions(id) ON DELETE SET NULL,
+                        run_label TEXT,
+                        status TEXT NOT NULL DEFAULT 'RUNNING',
+                        started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        ended_at TIMESTAMPTZ,
+                        shutdown_reason TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                    """)
+
+                    cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_bot_runs_config_status
+                    ON bot_runs(config_id, status);""")
+
                     # Unique hash so identical configs reuse the same row
                     cur.execute("""
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_config_versions_hash
                     ON config_versions(config_hash);
                     """)
 
-                    # 2) Extra FKs on trades (config + safety/volume/liquidity)
+                    # 3) Extra FKs on trades (config + safety/volume/liquidity)
                     cur.execute("""
                     ALTER TABLE trades
                         ADD COLUMN IF NOT EXISTS config_id INT REFERENCES config_versions(id),
+                        ADD COLUMN IF NOT EXISTS run_id INT REFERENCES bot_runs(id) ON DELETE SET NULL,
                         ADD COLUMN IF NOT EXISTS safety_result_id INT REFERENCES safety_results(id),
                         ADD COLUMN IF NOT EXISTS volume_snapshot_id INT REFERENCES token_volumes(id),
                         ADD COLUMN IF NOT EXISTS liquidity_snapshot_id INT REFERENCES liquidity_snapshots(id);
                     """)
 
-                    # 3) Price samples per trade (for offline TP/SL/TSL sims)
+                    # 4) Price samples per trade (for offline TP/SL/TSL sims)
                     cur.execute("""
                     CREATE TABLE IF NOT EXISTS price_samples (
                         id SERIAL PRIMARY KEY,
@@ -208,6 +229,10 @@ def create_tables():
                         price_usd DOUBLE PRECISION NOT NULL,
                         pnl_percent DOUBLE PRECISION
                     );
+                    """)
+                    cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_trades_run_id
+                    ON trades(run_id);
                     """)
 
                     # Helpful index for replaying trades

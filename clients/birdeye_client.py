@@ -5,7 +5,7 @@ class BirdeyeClient():
     def __init__(self, ctx:BotContext):
         self.logger = ctx.get("logger")
         self.bird_api_key = ctx.api_keys.get("bird_eye")
-        self.birdeye_requests = ctx.get("birdye_requests")
+        self.birdeye_requests = ctx.get("birdeye_requests")
     
     def get_token_price_paid(self, token_mint: str) -> float:
         try:

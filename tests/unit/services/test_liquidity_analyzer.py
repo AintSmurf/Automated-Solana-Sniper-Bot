@@ -257,3 +257,79 @@ def test_calculate_liquidity_without_token_or_sol_keeps_launch_price_zero(liquid
     assert out["launch_price_usd"] == 0.0
     assert out["token_liq_usd"] == 0.0
     assert out["total_liq_usd"] == 0.0
+
+@pytest.mark.unit
+@pytest.mark.liquidity_service
+def test_analyze_liquidty_returns_false_when_no_pool_mapping(liquidity_analyzer):
+    liquidity_analyzer.store_pool_mapping = lambda token_mint, transaction: None
+
+    result = liquidity_analyzer.analyze_liquidity({}, "mint123", 100)
+
+    assert result is False
+
+@pytest.mark.unit
+@pytest.mark.liquidity_service
+def test_analyze_liquidty_returns_false_when_total_liquidity_zero(liquidity_analyzer):
+    liquidity_analyzer.ctx.get("pending_data").clear()
+    liquidity_analyzer.token_pools.clear()
+
+    liquidity_analyzer.store_pool_mapping = lambda token_mint, transaction: ("pool1", "pumpfun")
+    liquidity_analyzer.parse_liquidity_logs = lambda transaction, token_mint, pool_owner: {
+        "breakdown": {"SOL": 0},
+        "total_liq_usd": 0,
+        "token_liq_usd": 0,
+        "launch_price_usd": 0,
+        "pool_address": pool_owner,
+    }
+
+    result = liquidity_analyzer.analyze_liquidity({}, "mint123", 100)
+
+    assert result is False
+    assert "mint123" not in liquidity_analyzer.ctx.get("pending_data")
+    assert "mint123" not in liquidity_analyzer.token_pools
+
+@pytest.mark.unit
+@pytest.mark.liquidity_service
+def test_analyze_liquidty_returns_true_and_saves_state_when_threshold_passes(liquidity_analyzer):
+    liquidity_analyzer.ctx.get("pending_data").clear()
+    liquidity_analyzer.token_pools.clear()
+
+    liquidity_analyzer.store_pool_mapping = lambda token_mint, transaction: ("pool1", "pumpfun")
+    liquidity_analyzer.parse_liquidity_logs = lambda transaction, token_mint, pool_owner: {
+        "breakdown": {"SOL": 250},
+        "total_liq_usd": 500,
+        "token_liq_usd": 250,
+        "launch_price_usd": 0.5,
+        "pool_address": pool_owner,
+    }
+
+    result = liquidity_analyzer.analyze_liquidity({}, "mint123", 200)
+
+    assert result is True
+    assert "mint123" in liquidity_analyzer.ctx.get("pending_data")
+    assert liquidity_analyzer.ctx.get("pending_data")["mint123"]["dex"] == "pumpfun"
+    assert liquidity_analyzer.ctx.get("pending_data")["mint123"]["pool_address"] == "pool1"
+    assert liquidity_analyzer.token_pools["mint123"]["pool"] == "pool1"
+    assert liquidity_analyzer.token_pools["mint123"]["dex"] == "pumpfun"
+
+@pytest.mark.unit
+@pytest.mark.liquidity_service
+def test_analyze_liquidty_returns_false_for_low_liquidity_but_saves_pending_data(liquidity_analyzer):
+    liquidity_analyzer.ctx.get("pending_data").clear()
+    liquidity_analyzer.token_pools.clear()
+
+    liquidity_analyzer.store_pool_mapping = lambda token_mint, transaction: ("pool1", "pumpfun")
+    liquidity_analyzer.parse_liquidity_logs = lambda transaction, token_mint, pool_owner: {
+        "breakdown": {"SOL": 50},
+        "total_liq_usd": 120,
+        "token_liq_usd": 70,
+        "launch_price_usd": 0.2,
+        "pool_address": pool_owner,
+    }
+
+    result = liquidity_analyzer.analyze_liquidity({}, "mint123", 200)
+
+    assert result is False
+    assert "mint123" in liquidity_analyzer.ctx.get("pending_data")
+    assert liquidity_analyzer.ctx.get("pending_data")["mint123"]["dex"] == "pumpfun"
+    assert "mint123" not in liquidity_analyzer.token_pools

@@ -30,7 +30,7 @@ pipeline {
           pip install -U pip setuptools wheel
           pip install ".[test]"
           cd tests
-          pytest -m unit --maxfail=1 -q
+          pytest -m unit 
         '''
       }
     }

@@ -1,25 +1,46 @@
-# Python artefacts
+venv
+scrapper
+plan.txt
 __pycache__/
-*.pyc
-
-# Virtual environments
-venv/
-.env/
-
-# Logs
-logs/
-logs/**
-
-# Results / exports
-results/
-*.log
-
-# Git / IDE
-.git/
+*.py[cod]
+local_credentials.ps1
+logs
+__pycache__
+liquidity_connector.py
+tokens_to_track
+analysis 
+.vscode
+~$*
+copy_files.sh
+get_files_from_server.sh
+*.tar
+scripts
+playground.py
+log_api.py
+crypto_sniper_fixed_spacing.drawio
+test.json
+backup/
+trade_count.json
+config/bot_settings.json
+summary_results.xlsx
+solana_sniper_bot.egg-info
+build
+third_party_imports.py
+infra/ansible/inventory.ini
+infra/ansible/project.tar
+infra/group_vars/sniper_lab.yml
+infra/ansible/.env
+bot_scripts/generate_reports.py
+trigger_analysis.xlsx
+bot_scripts/backtest_offline.py
+summary_results_2.xlsx
+tests/integration
+tests/logs
+tests/system
+tests/devnet
+tests/db
+tests/clean_cache.ps1
+.pytest_cache
+tests/config/devnet_wallet.json
+report_v2.py
 .gitignore
-.idea/
-.vscode/
-
-# OS junk
-.DS_Store
-Thumbs.db

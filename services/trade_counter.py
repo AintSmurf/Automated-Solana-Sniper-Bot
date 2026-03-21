@@ -44,8 +44,8 @@ class TradeCounter:
         except Exception as e:
             logger.error(f"Failed to save trade count: {e}")
     
-    def reset(self):
+    def reset(self, value=0):
         with self.lock:
-            self.count = 0
+            self.count = value
             self._save_trade_count()
 
