@@ -127,6 +127,16 @@ All notable changes to this project will be documented in this file.
   - Failed / timed-out BUY must not consume a trade slot unless wallet ownership is confirmed.
   - SELL failure must not close the DB trade.
   - `has_open_positions()` must respect pending futures, active trades, and live DB trades.
+### Analytics Agent Layer
+- Plan to add a read-only analytics/agent layer on top of the existing reporting and log extraction tools.
+- Initial version will analyze generated reports, matched token logs, and DB summaries.
+- Agent will generate recommendations and investigation notes only.
+- Agent will not execute trades, call live trading APIs, or auto-edit `settings.json`.
+- Future output target:
+  - `agent_report.md`
+  - config experiment suggestions
+  - anomaly detection notes
+  - comparison of winners vs losers
 
 ---
 ## [4.3.8] – Unit Test Foundation, ScamChecker Hardening, Liquidity Coverage & CI Prep
